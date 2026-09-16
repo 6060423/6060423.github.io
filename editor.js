@@ -1,28 +1,10 @@
 import React from "https://esm.sh/react@18.2.0";
 import { createRoot } from "https://esm.sh/react-dom@18.2.0/client";
 
+
 const { useState, useRef, useCallback, useEffect, createElement: h } = React;
-
-
-const initialLocations = [
-  { id: "placeholder", name: "Kamer 1", shape: "rect", x: 0, y: 0, width: 70, height: 50 },
-  { id: "placeholder2", name: "Kamer 2", shape: "circle", x: 105, y: 35, radius: 35 },
-  {
-    id: "placeholder3",
-    name: "Kamer 3",
-    shape: "polygon",
-    x: 140,
-    y: 0,
-    points: [[0, 0], [35, 0], [65, 30], [25, 50], [0, 30]],
-  },
-  { id: "placeholder4", name: "Kamer 4", shape: "rect", x: 210, y: 0, width: 50, height: 50 },
-];
-
-const initialConnections = [
-  { id: "conn_1", from: "placeholder", to: "placeholder2" },
-  { id: "conn_2", from: "placeholder2", to: "placeholder3" },
-  { id: "conn_3", from: "placeholder3", to: "placeholder4" },
-];
+const initialLocations = [];
+const initialConnections = [];
 
 const GRID = 10;
 const snap = (v) => Math.round(v / GRID) * GRID;
@@ -66,13 +48,50 @@ function boundsOf(loc) {
   return { centerX: loc.x + loc.width / 2, centerY: loc.y + loc.height / 2 };
 }
 
+// Geeft de losse rechte randen (wanden) van een kamer terug, elk met het
+// midden van die rand — dat is waar het "+"-knopje komt te staan.
+// Voor circles bestaan er geen rechte lijnen, dus die krijgen in plaats
+// daarvan 4 vaste aansluitpunten op de rand (boven/rechts/onder/links).
+function edgesOf(loc) {
+  if (loc.shape === "rect") {
+    const corners = [
+      [loc.x, loc.y],
+      [loc.x + loc.width, loc.y],
+      [loc.x + loc.width, loc.y + loc.height],
+      [loc.x, loc.y + loc.height],
+    ];
+    return corners.map((p1, i) => {
+      const p2 = corners[(i + 1) % corners.length];
+      return { mid: [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2] };
+    });
+  }
+  if (loc.shape === "polygon") {
+    const abs = loc.points.map(([px, py]) => [loc.x + px, loc.y + py]);
+    return abs.map((p1, i) => {
+      const p2 = abs[(i + 1) % abs.length];
+      return { mid: [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2] };
+    });
+  }
+  if (loc.shape === "circle") {
+    return [
+      { mid: [loc.x, loc.y - loc.radius] },
+      { mid: [loc.x + loc.radius, loc.y] },
+      { mid: [loc.x, loc.y + loc.radius] },
+      { mid: [loc.x - loc.radius, loc.y] },
+    ];
+  }
+  return [];
+}
+
 function MapEditorPOC() {
+  const [kamer, setKamer] = useState("");
   const [locations, setLocations] = useState(initialLocations);
   const [connections, setConnections] = useState(initialConnections);
   const [selectedId, setSelectedId] = useState(null);
   const [dragging, setDragging] = useState(null);
   const [drawMode, setDrawMode] = useState(false);
   const [drawPoints, setDrawPoints] = useState([]); // array van [x, y], absolute SVG-coördinaten
+  const [pendingEdge, setPendingEdge] = useState(null); // { locId, edgeIndex } — eerste wand die je hebt aangeklikt
   const svgRef = useRef(null);
 
   const CLOSE_DISTANCE = 16; // klik binnen dit aantal px van het startpunt = vorm sluiten
@@ -115,7 +134,7 @@ function MapEditorPOC() {
   const drawPreviewLine = drawPoints.length >= 2
     ? h("polyline", {
         points: drawPoints.map(([px, py]) => `${px},${py}`).join(" "),
-        fill: "none", stroke: "#22d3ee", strokeWidth: "2", strokeDasharray: "4 4",
+        fill: "none", stroke: "#ee5c22", strokeWidth: "2", strokeDasharray: "4 4",
       })
     : null;
 
@@ -123,16 +142,18 @@ function MapEditorPOC() {
     h("circle", {
       key: `drawpoint_${i}`,
       cx: px, cy: py, r: i === 0 ? 6 : 4,
-      fill: i === 0 ? "#22d3ee" : "#0e7490",
-      stroke: "#083344", strokeWidth: "1.5",
+      fill: i === 0 ? "#ee2222" : "#ee6d22",
+      stroke: "#000000", strokeWidth: "1.5",
     })
   );
 
-  // Klik ergens leeg op de svg: normaal deselecteert dit, maar in teken-modus
-  // zet dit een nieuw punt neer (gesnapt aan de grid).
+  // Klik ergens leeg op de svg: normaal deselecteert dit (en annuleert een
+  // eventuele lopende wand-verbinding), maar in teken-modus zet dit een
+  // nieuw punt neer (gesnapt aan de grid).
   const handleCanvasPointerDown = (e) => {
     if (!drawMode) {
       setSelectedId(null);
+      setPendingEdge(null);
       return;
     }
     const { x, y } = toSvgPoint(e.clientX, e.clientY);
@@ -182,26 +203,22 @@ function MapEditorPOC() {
     setDrawMode(false);
   };
 
-  // Checkt of twee kamers al een connection hebben, in beide richtingen.
-  const areConnected = (idA, idB) =>
-    connections.some(
-      (conn) => (conn.from === idA && conn.to === idB) || (conn.from === idB && conn.to === idA)
-    );
-
-  // Klik op het knopje tussen twee kamers: bestaat de connection al, dan
-  // wordt hij verwijderd (los-linken); bestaat hij nog niet, dan wordt hij
-  // aangemaakt (vast-linken met een streepje, zoals de bestaande connections
-  // al getekend worden met strokeDasharray).
-  const toggleConnection = (idA, idB) => {
-    if (areConnected(idA, idB)) {
-      setConnections((prev) =>
-        prev.filter(
-          (conn) => !((conn.from === idA && conn.to === idB) || (conn.from === idB && conn.to === idA))
-        )
-      );
-    } else {
-      setConnections((prev) => [...prev, { id: `conn_${Date.now()}`, from: idA, to: idB }]);
-    }
+  // Zet in één klik een perfect vierkant neer — geen teken-modus nodig.
+  // Elk nieuw vierkant krijgt een licht andere positie (op basis van hoeveel
+  // kamers er al zijn), zodat ze niet allemaal precies op elkaar landen.
+  const SQUARE_SIZE = 80;
+  const addSquareRoom = () => {
+    const offset = (locations.length % 6) * (SQUARE_SIZE + GRID);
+    const newRoom = {
+      id: `loc_${Date.now()}`,
+      name: `Kamer ${nextRoomNumber}`,
+      shape: "rect",
+      x: snap(40 + offset),
+      y: snap(40),
+      width: SQUARE_SIZE,
+      height: SQUARE_SIZE,
+    };
+    setLocations((prev) => [...prev, newRoom]);
   };
 
   // Verwijdert de geselecteerde kamer, en ook alle connections die naar
@@ -214,8 +231,8 @@ function MapEditorPOC() {
     setSelectedId(null);
   };
 
-  // Delete/Backspace verwijdert de geselecteerde kamer, behalve tijdens het
-  // tekenen (dan zou dat verwarrend zijn met het annuleren van punten).
+  // Delete/Backspace verwijdert de geselecteerde kamer, Escape annuleert
+  // een lopende wand-verbinding. Beide niet tijdens het tekenen.
   useEffect(() => {
     const onKeyDown = (e) => {
       if (drawMode) return;
@@ -223,29 +240,96 @@ function MapEditorPOC() {
         e.preventDefault();
         deleteSelectedRoom();
       }
+      if (e.key === "Escape" && pendingEdge) {
+        setPendingEdge(null);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [drawMode, selectedId]);
+  }, [drawMode, selectedId, pendingEdge]);
 
-  // Connections als <line> elementen
-  const connectionEls = connections.map((conn) => {
+  // Klik op een wand-knopje: eerste klik onthoudt welke wand je hebt
+  // gekozen (pendingEdge); een tweede klik op een wand van een ándere
+  // kamer maakt de connection; klik je nogmaals dezelfde wand aan, dan
+  // annuleer je 'm weer.
+  const handleEdgeClick = (locId, edgeIndex, e) => {
+    e.stopPropagation();
+
+    if (!pendingEdge) {
+      setPendingEdge({ locId, edgeIndex });
+      return;
+    }
+
+    if (pendingEdge.locId === locId && pendingEdge.edgeIndex === edgeIndex) {
+      setPendingEdge(null); // dezelfde wand nogmaals aangeklikt: annuleren
+      return;
+    }
+
+    if (pendingEdge.locId === locId) {
+      // andere wand van dezelfde kamer: geen verbinding met jezelf,
+      // gewoon de nieuwe wand als startpunt nemen
+      setPendingEdge({ locId, edgeIndex });
+      return;
+    }
+
+    setConnections((prev) => [
+      ...prev,
+      {
+        id: `conn_${Date.now()}`,
+        from: pendingEdge.locId,
+        fromEdge: pendingEdge.edgeIndex,
+        to: locId,
+        toEdge: edgeIndex,
+      },
+    ]);
+    setPendingEdge(null);
+  };
+
+  // Connections als <line> elementen — het midden van de gekozen wand aan
+  // elke kant, opnieuw berekend op basis van de huidige positie van de
+  // kamer (zodat de lijn meebeweegt als je een kamer verschuift). Klik op
+  // de lijn om 'm te verwijderen — de onzichtbare, bredere lijn erachter
+  // (hitArea) maakt dat makkelijker te raken dan de dunne zichtbare lijn.
+  const deleteConnection = (connId) => {
+    setConnections((prev) => prev.filter((conn) => conn.id !== connId));
+  };
+
+  const connectionEls = connections.flatMap((conn) => {
     const from = locations.find((l) => l.id === conn.from);
     const to = locations.find((l) => l.id === conn.to);
-    if (!from || !to) return null;
-    const a = boundsOf(from);
-    const b = boundsOf(to);
-    return h("line", {
-      key: conn.id,
-      x1: a.centerX, y1: a.centerY, x2: b.centerX, y2: b.centerY,
-      stroke: "#57534e", strokeWidth: "3", strokeDasharray: "2 6", strokeLinecap: "round",
-    });
+    if (!from || !to) return [];
+    const fromEdges = edgesOf(from);
+    const toEdges = edgesOf(to);
+    const a = fromEdges[conn.fromEdge]?.mid;
+    const b = toEdges[conn.toEdge]?.mid;
+    if (!a || !b) return [];
+    return [
+      h("line", {
+        key: `${conn.id}_hit`,
+        x1: a[0], y1: a[1], x2: b[0], y2: b[1],
+        stroke: "transparent", strokeWidth: "14",
+        style: { cursor: "pointer" },
+        onPointerDown: (e) => {
+          e.stopPropagation();
+          deleteConnection(conn.id);
+        },
+      }),
+      h("line", {
+        key: conn.id,
+        x1: a[0], y1: a[1], x2: b[0], y2: b[1],
+        stroke: "#57534e", strokeWidth: "3", strokeDasharray: "2 6", strokeLinecap: "round",
+        style: { pointerEvents: "none" },
+      }),
+    ];
   });
 
 
   const roomEls = locations.map((loc) => {
     const isSelected = loc.id === selectedId;
-    const fill = isSelected ? "#7c2d12" : "#1c1917";
+    // Achtergrond blijft altijd wit, ook bij selectie — alleen de rand
+    // (stroke) verandert nog van kleur om te laten zien dat iets
+    // geselecteerd is.
+    const fill = "#ffffff";
     const stroke = isSelected ? "#ea580c" : "#57534e";
     const strokeWidth = isSelected ? 2 : 1.5;
     const { centerX, centerY } = boundsOf(loc);
@@ -264,7 +348,7 @@ function MapEditorPOC() {
 
     const label = h("text", {
       x: centerX, y: centerY, textAnchor: "middle", dominantBaseline: "middle",
-      fill: "#e7e5e4", fontSize: "9", style: { pointerEvents: "none" },
+      fill: "orange", fontSize: "9", style: { pointerEvents: "none" },
     }, loc.name);
 
     return h("g", {
@@ -274,46 +358,37 @@ function MapEditorPOC() {
     }, shapeEl, label);
   });
 
-  // Op het midden tussen élk paar kamers een klein knopje: klik om ze te
-  // linken met een streepje (connection), of om een bestaande link weer
-  // los te maken. Niet zichtbaar tijdens het tekenen, dat zou anders in de
-  // weg zitten bij het plaatsen van punten.
-  const linkButtonEls = [];
+  // Eén "+"-knopje per wand van elke kamer. Niet zichtbaar tijdens het
+  // tekenen. De wand die als eerste is aangeklikt (pendingEdge) licht op
+  // in een andere kleur, zodat je ziet dat hij op zijn "partner" wacht.
+  const edgeButtonEls = [];
   if (!drawMode) {
-    for (let i = 0; i < locations.length; i++) {
-      for (let j = i + 1; j < locations.length; j++) {
-        const a = locations[i];
-        const b = locations[j];
-        const posA = boundsOf(a);
-        const posB = boundsOf(b);
-        const midX = (posA.centerX + posB.centerX) / 2;
-        const midY = (posA.centerY + posB.centerY) / 2;
-        const linked = areConnected(a.id, b.id);
+    locations.forEach((loc) => {
+      edgesOf(loc).forEach((edge, edgeIndex) => {
+        const isPending = pendingEdge && pendingEdge.locId === loc.id && pendingEdge.edgeIndex === edgeIndex;
+        const [mx, my] = edge.mid;
 
-        linkButtonEls.push(
+        edgeButtonEls.push(
           h("g", {
-            key: `linkbtn_${a.id}_${b.id}`,
-            onPointerDown: (e) => {
-              e.stopPropagation();
-              toggleConnection(a.id, b.id);
-            },
+            key: `edgebtn_${loc.id}_${edgeIndex}`,
+            onPointerDown: (e) => handleEdgeClick(loc.id, edgeIndex, e),
             style: { cursor: "pointer" },
           },
             h("circle", {
-              cx: midX, cy: midY, r: 7,
-              fill: linked ? "#166534" : "#1c1917",
-              stroke: linked ? "#4ade80" : "#57534e",
+              cx: mx, cy: my, r: 6,
+              fill: isPending ? "#0e7490" : "#1c1917",
+              stroke: isPending ? "#22d3ee" : "#57534e",
               strokeWidth: "1.5",
             }),
             h("text", {
-              x: midX, y: midY, textAnchor: "middle", dominantBaseline: "middle",
-              fill: linked ? "#4ade80" : "#a8a29e", fontSize: "10",
+              x: mx, y: my, textAnchor: "middle", dominantBaseline: "middle",
+              fill: isPending ? "#e0f7fa" : "#a8a29e", fontSize: "9",
               style: { pointerEvents: "none" },
-            }, linked ? "×" : "+")
+            }, "+")
           )
         );
-      }
-    }
+      });
+    });
   }
 
   return h("div", { className: "w-full h-full min-h-[520px] bg-stone-950 flex flex-col font-sans" },
@@ -332,7 +407,22 @@ function MapEditorPOC() {
         : h("button", {
             onClick: () => setDrawMode(true),
             className: "text-xs px-2 py-1 rounded border border-stone-600 text-stone-300 hover:bg-stone-800",
-          }, "+ Kamer tekenen")
+          }, "+ Kamer tekenen"),
+      !drawMode
+        ? h("button", {
+            onClick: addSquareRoom,
+            className: "text-xs px-2 py-1 rounded border border-stone-600 text-stone-300 hover:bg-stone-800",
+          }, "+ Vierkant")
+        : null
+    ),
+    h("div", { className: "px-4 py-2 border-b border-stone-800 text-xs text-stone-500" },
+      drawMode
+        ? `Tekenen: klik om punten neer te zetten (${drawPoints.length} geplaatst) · klik bij het startpunt om te sluiten (min. 3 punten)`
+        : pendingEdge
+          ? "Klik nu op een wand van een andere kamer om te verbinden · Escape om te annuleren"
+          : selected
+            ? `Selected: ${selected.name} — x:${selected.x} y:${selected.y} · Delete/Backspace om te verwijderen`
+            : "Click empty space to deselect · drag a room to move it"
     ),
     h("svg", {
       ref: svgRef,
@@ -351,16 +441,9 @@ function MapEditorPOC() {
       h("rect", { width: "1000", height: "1000", fill: "url(#grid)" }),
       ...connectionEls,
       ...roomEls,
-      ...linkButtonEls,
+      ...edgeButtonEls,
       drawPreviewLine,
       ...drawPreviewDots
-    ),
-    h("div", { className: "px-4 py-2 border-t border-stone-800 text-xs text-stone-500" },
-      drawMode
-        ? `Tekenen: klik om punten neer te zetten (${drawPoints.length} geplaatst) · klik bij het startpunt om te sluiten (min. 3 punten)`
-        : selected
-          ? `Selected: ${selected.name} — x:${selected.x} y:${selected.y} · Delete/Backspace om te verwijderen`
-          : "Click empty space to deselect · drag a room to move it"
     )
   );
 }
