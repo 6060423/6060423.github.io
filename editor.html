@@ -5,8 +5,37 @@
     <link rel="stylesheet" type="text/css" href="opmaak.css"> <!--css-bestand in index-->
     <meta charset="utf-8">
   </head>
-<div id="root"></div>
-<form id="kamernaam veranderen">
-    
+  <body>
+     <style>
+ /* code om de tekst groter te maken */
+        .grote-tekst {
+            font-size: 18px; }
+    </style> 
+    <ul class="top-level-menu">
+      <li><a href="../index.html">Home</a></li>
+      <li><a href="#">Algemeen</a>
+          <ul class="second-level-menu">
+              <li><a href="../htmlcode/Algemene-informatie.html">Informatie</a></li>
+              <li><a href="../htmlcode/bestandsformaten.html">Bestandsformaten</a></li>
+              <li><a href="../htmlcode/binairstelsel.html">Binair Stelsel</a></li>
+              <li><a href="../htmlcode/compressie.html">Compressie</a></li>
+              <li><a href="../htmlcode/kleurmodellen.html">Kleurmodellen</a>
+          </ul>
+      </li>
+            <ul class="top-level-menu">
+                  <li><a href="#">Drielagenmodel</a>
+                        <ul class="second-level-menu">
+                          <li><a href="../htmlcode/logischelaag.html">Logische laag</a></li>
+                          <li><a href="../htmlcode/toepassingenlaag.html">Toepassingenlaag</a></li>
+                          <li><a href="../htmlcode/fysiekelaag.html">Fysieke laag</a>
+                        <ul class="third-level-menu">
+                          <li><a href="../htmlcode/CPU.html">CPU</a></li>
+                          <li><a href="../htmlcode/GPU.html">GPU</a></li>
+                          </ul>
+                        </li>
+                      </ul>
+                    </li>
+              <li><a href="editor.html">Map maker</a>
+<form id="naam veranderen">
 </form>
 <script type="module" src="editor.js"></script>
