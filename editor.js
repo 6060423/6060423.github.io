@@ -1,10 +1,28 @@
 import React from "https://esm.sh/react@18.2.0";
 import { createRoot } from "https://esm.sh/react-dom@18.2.0/client";
 
-
 const { useState, useRef, useCallback, useEffect, createElement: h } = React;
-const initialLocations = [];
-const initialConnections = [];
+
+
+const initialLocations = [
+  { id: "placeholder", name: "Kamer 1", shape: "rect", x: 0, y: 0, width: 70, height: 50 },
+  { id: "placeholder2", name: "Kamer 2", shape: "circle", x: 105, y: 35, radius: 35 },
+  {
+    id: "placeholder3",
+    name: "Kamer 3",
+    shape: "polygon",
+    x: 140,
+    y: 0,
+    points: [[0, 0], [35, 0], [65, 30], [25, 50], [0, 30]],
+  },
+  { id: "placeholder4", name: "Kamer 4", shape: "rect", x: 210, y: 0, width: 50, height: 50 },
+];
+
+const initialConnections = [
+  { id: "conn_1", from: "placeholder", to: "placeholder2" },
+  { id: "conn_2", from: "placeholder2", to: "placeholder3" },
+  { id: "conn_3", from: "placeholder3", to: "placeholder4" },
+];
 
 const GRID = 10;
 const snap = (v) => Math.round(v / GRID) * GRID;
@@ -49,7 +67,6 @@ function boundsOf(loc) {
 }
 
 function MapEditorPOC() {
-  const [kamer, setKamer] = useState("");
   const [locations, setLocations] = useState(initialLocations);
   const [connections, setConnections] = useState(initialConnections);
   const [selectedId, setSelectedId] = useState(null);
@@ -165,6 +182,28 @@ function MapEditorPOC() {
     setDrawMode(false);
   };
 
+  // Checkt of twee kamers al een connection hebben, in beide richtingen.
+  const areConnected = (idA, idB) =>
+    connections.some(
+      (conn) => (conn.from === idA && conn.to === idB) || (conn.from === idB && conn.to === idA)
+    );
+
+  // Klik op het knopje tussen twee kamers: bestaat de connection al, dan
+  // wordt hij verwijderd (los-linken); bestaat hij nog niet, dan wordt hij
+  // aangemaakt (vast-linken met een streepje, zoals de bestaande connections
+  // al getekend worden met strokeDasharray).
+  const toggleConnection = (idA, idB) => {
+    if (areConnected(idA, idB)) {
+      setConnections((prev) =>
+        prev.filter(
+          (conn) => !((conn.from === idA && conn.to === idB) || (conn.from === idB && conn.to === idA))
+        )
+      );
+    } else {
+      setConnections((prev) => [...prev, { id: `conn_${Date.now()}`, from: idA, to: idB }]);
+    }
+  };
+
   // Verwijdert de geselecteerde kamer, en ook alle connections die naar
   // (of vanaf) die kamer verwezen — anders blijft er een "dode" lijn hangen
   // die verwijst naar een kamer die niet meer bestaat.
@@ -225,7 +264,7 @@ function MapEditorPOC() {
 
     const label = h("text", {
       x: centerX, y: centerY, textAnchor: "middle", dominantBaseline: "middle",
-      fill: "red", fontSize: "9", style: { pointerEvents: "none" },
+      fill: "#e7e5e4", fontSize: "9", style: { pointerEvents: "none" },
     }, loc.name);
 
     return h("g", {
@@ -234,6 +273,48 @@ function MapEditorPOC() {
       style: { cursor: dragging?.id === loc.id ? "grabbing" : "grab" },
     }, shapeEl, label);
   });
+
+  // Op het midden tussen élk paar kamers een klein knopje: klik om ze te
+  // linken met een streepje (connection), of om een bestaande link weer
+  // los te maken. Niet zichtbaar tijdens het tekenen, dat zou anders in de
+  // weg zitten bij het plaatsen van punten.
+  const linkButtonEls = [];
+  if (!drawMode) {
+    for (let i = 0; i < locations.length; i++) {
+      for (let j = i + 1; j < locations.length; j++) {
+        const a = locations[i];
+        const b = locations[j];
+        const posA = boundsOf(a);
+        const posB = boundsOf(b);
+        const midX = (posA.centerX + posB.centerX) / 2;
+        const midY = (posA.centerY + posB.centerY) / 2;
+        const linked = areConnected(a.id, b.id);
+
+        linkButtonEls.push(
+          h("g", {
+            key: `linkbtn_${a.id}_${b.id}`,
+            onPointerDown: (e) => {
+              e.stopPropagation();
+              toggleConnection(a.id, b.id);
+            },
+            style: { cursor: "pointer" },
+          },
+            h("circle", {
+              cx: midX, cy: midY, r: 7,
+              fill: linked ? "#166534" : "#1c1917",
+              stroke: linked ? "#4ade80" : "#57534e",
+              strokeWidth: "1.5",
+            }),
+            h("text", {
+              x: midX, y: midY, textAnchor: "middle", dominantBaseline: "middle",
+              fill: linked ? "#4ade80" : "#a8a29e", fontSize: "10",
+              style: { pointerEvents: "none" },
+            }, linked ? "×" : "+")
+          )
+        );
+      }
+    }
+  }
 
   return h("div", { className: "w-full h-full min-h-[520px] bg-stone-950 flex flex-col font-sans" },
     h("div", { className: "px-4 py-3 border-b border-stone-800 flex items-center justify-end gap-2" },
@@ -270,6 +351,7 @@ function MapEditorPOC() {
       h("rect", { width: "1000", height: "1000", fill: "url(#grid)" }),
       ...connectionEls,
       ...roomEls,
+      ...linkButtonEls,
       drawPreviewLine,
       ...drawPreviewDots
     ),
