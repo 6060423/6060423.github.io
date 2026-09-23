@@ -133,17 +133,16 @@ function MapEditorPOC() {
   // gekleurd, zodat je ziet waar je moet klikken om de vorm te sluiten).
   const drawPreviewLine = drawPoints.length >= 2
     ? h("polyline", {
+        className: "draw-preview-line",
         points: drawPoints.map(([px, py]) => `${px},${py}`).join(" "),
-        fill: "none", stroke: "#ee5c22", strokeWidth: "2", strokeDasharray: "4 4",
       })
     : null;
 
   const drawPreviewDots = drawPoints.map(([px, py], i) =>
     h("circle", {
       key: `drawpoint_${i}`,
+      className: `draw-dot${i === 0 ? " is-first" : ""}`,
       cx: px, cy: py, r: i === 0 ? 6 : 4,
-      fill: i === 0 ? "#ee2222" : "#ee6d22",
-      stroke: "#000000", strokeWidth: "1.5",
     })
   );
 
@@ -206,7 +205,7 @@ function MapEditorPOC() {
   // Zet in één klik een perfect vierkant neer — geen teken-modus nodig.
   // Elk nieuw vierkant krijgt een licht andere positie (op basis van hoeveel
   // kamers er al zijn), zodat ze niet allemaal precies op elkaar landen.
-  const SQUARE_SIZE = 80;
+  const SQUARE_SIZE = 80; // veelvoud van GRID, zodat 'ie meteen mooi aansluit
   const addSquareRoom = () => {
     const offset = (locations.length % 6) * (SQUARE_SIZE + GRID);
     const newRoom = {
@@ -233,6 +232,25 @@ function MapEditorPOC() {
 
   // Delete/Backspace verwijdert de geselecteerde kamer, Escape annuleert
   // een lopende wand-verbinding. Beide niet tijdens het tekenen.
+  const ARROW_DELTAS = {
+    ArrowUp: [0, -1],
+    ArrowDown: [0, 1],
+    ArrowLeft: [-1, 0],
+    ArrowRight: [1, 0],
+  };
+
+  const moveSelectedRoom = (dx, dy) => {
+    setLocations((prev) =>
+      prev.map((loc) =>
+        loc.id === selectedId ? { ...loc, x: loc.x + dx * GRID, y: loc.y + dy * GRID } : loc
+      )
+    );
+  };
+
+  // Delete/Backspace verwijdert de geselecteerde kamer, Escape annuleert
+  // een lopende wand-verbinding, en de pijltjestoetsen verplaatsen de
+  // geselecteerde kamer per GRID-stap. Niks van dit alles tijdens het
+  // tekenen.
   useEffect(() => {
     const onKeyDown = (e) => {
       if (drawMode) return;
@@ -242,6 +260,11 @@ function MapEditorPOC() {
       }
       if (e.key === "Escape" && pendingEdge) {
         setPendingEdge(null);
+      }
+      if (ARROW_DELTAS[e.key] && selectedId) {
+        e.preventDefault(); // anders scrollt de pagina zelf mee
+        const [dx, dy] = ARROW_DELTAS[e.key];
+        moveSelectedRoom(dx, dy);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -289,7 +312,8 @@ function MapEditorPOC() {
   // elke kant, opnieuw berekend op basis van de huidige positie van de
   // kamer (zodat de lijn meebeweegt als je een kamer verschuift). Klik op
   // de lijn om 'm te verwijderen — de onzichtbare, bredere lijn erachter
-  // (hitArea) maakt dat makkelijker te raken dan de dunne zichtbare lijn.
+  // (connection-hit) maakt dat makkelijker te raken dan de dunne
+  // zichtbare lijn.
   const deleteConnection = (connId) => {
     setConnections((prev) => prev.filter((conn) => conn.id !== connId));
   };
@@ -306,9 +330,8 @@ function MapEditorPOC() {
     return [
       h("line", {
         key: `${conn.id}_hit`,
+        className: "connection-hit",
         x1: a[0], y1: a[1], x2: b[0], y2: b[1],
-        stroke: "transparent", strokeWidth: "14",
-        style: { cursor: "pointer" },
         onPointerDown: (e) => {
           e.stopPropagation();
           deleteConnection(conn.id);
@@ -316,9 +339,8 @@ function MapEditorPOC() {
       }),
       h("line", {
         key: conn.id,
+        className: "connection-line",
         x1: a[0], y1: a[1], x2: b[0], y2: b[1],
-        stroke: "#57534e", strokeWidth: "3", strokeDasharray: "2 6", strokeLinecap: "round",
-        style: { pointerEvents: "none" },
       }),
     ];
   });
@@ -326,35 +348,30 @@ function MapEditorPOC() {
 
   const roomEls = locations.map((loc) => {
     const isSelected = loc.id === selectedId;
-    // Achtergrond blijft altijd wit, ook bij selectie — alleen de rand
-    // (stroke) verandert nog van kleur om te laten zien dat iets
-    // geselecteerd is.
-    const fill = "#ffffff";
-    const stroke = isSelected ? "#ea580c" : "#57534e";
-    const strokeWidth = isSelected ? 2 : 1.5;
+    const shapeClassName = `room-shape${isSelected ? " is-selected" : ""}`;
     const { centerX, centerY } = boundsOf(loc);
 
     let shapeEl;
     if (loc.shape === "polygon") {
       shapeEl = h("polygon", {
+        className: shapeClassName,
         points: loc.points.map(([px, py]) => `${loc.x + px},${loc.y + py}`).join(" "),
-        fill, stroke, strokeWidth, strokeLinejoin: "round",
       });
     } else if (loc.shape === "circle") {
-      shapeEl = h("circle", { cx: loc.x, cy: loc.y, r: loc.radius, fill, stroke, strokeWidth });
+      shapeEl = h("circle", { className: shapeClassName, cx: loc.x, cy: loc.y, r: loc.radius });
     } else {
-      shapeEl = h("rect", { x: loc.x, y: loc.y, width: loc.width, height: loc.height, rx: 4, fill, stroke, strokeWidth });
+      shapeEl = h("rect", { className: shapeClassName, x: loc.x, y: loc.y, width: loc.width, height: loc.height, rx: 4 });
     }
 
     const label = h("text", {
+      className: "room-label",
       x: centerX, y: centerY, textAnchor: "middle", dominantBaseline: "middle",
-      fill: "orange", fontSize: "9", style: { pointerEvents: "none" },
     }, loc.name);
 
     return h("g", {
       key: loc.id,
+      className: `room-group${dragging?.id === loc.id ? " is-dragging" : ""}`,
       onPointerDown: (e) => handlePointerDown(e, loc),
-      style: { cursor: dragging?.id === loc.id ? "grabbing" : "grab" },
     }, shapeEl, label);
   });
 
@@ -362,28 +379,23 @@ function MapEditorPOC() {
   // tekenen. De wand die als eerste is aangeklikt (pendingEdge) licht op
   // in een andere kleur, zodat je ziet dat hij op zijn "partner" wacht.
   const edgeButtonEls = [];
-  if (!drawMode) {
+  if (!drawMode && selected != null) {
     locations.forEach((loc) => {
       edgesOf(loc).forEach((edge, edgeIndex) => {
         const isPending = pendingEdge && pendingEdge.locId === loc.id && pendingEdge.edgeIndex === edgeIndex;
         const [mx, my] = edge.mid;
+        const pendingClass = isPending ? " is-pending" : "";
 
         edgeButtonEls.push(
           h("g", {
             key: `edgebtn_${loc.id}_${edgeIndex}`,
+            className: `edge-btn${pendingClass}`,
             onPointerDown: (e) => handleEdgeClick(loc.id, edgeIndex, e),
-            style: { cursor: "pointer" },
           },
-            h("circle", {
-              cx: mx, cy: my, r: 6,
-              fill: isPending ? "#0e7490" : "#1c1917",
-              stroke: isPending ? "#22d3ee" : "#57534e",
-              strokeWidth: "1.5",
-            }),
+            h("circle", { className: `edge-dot${pendingClass}`, cx: mx, cy: my, r: 4 }),
             h("text", {
+              className: `edge-label${pendingClass}`,
               x: mx, y: my, textAnchor: "middle", dominantBaseline: "middle",
-              fill: isPending ? "#e0f7fa" : "#a8a29e", fontSize: "9",
-              style: { pointerEvents: "none" },
             }, "+")
           )
         );
@@ -391,42 +403,42 @@ function MapEditorPOC() {
     });
   }
 
-  return h("div", { className: "w-full h-full min-h-[520px] bg-stone-950 flex flex-col font-sans" },
-    h("div", { className: "px-4 py-3 border-b border-stone-800 flex items-center justify-end gap-2" },
+  return h("div", { className: "editor-root" },
+    h("div", { className: "editor-toolbar" },
       selected && !drawMode
         ? h("button", {
             onClick: deleteSelectedRoom,
-            className: "text-xs px-2 py-1 rounded border border-red-800 text-red-300 hover:bg-red-950",
+            className: "editor-btn editor-btn-delete",
           }, "Verwijder kamer")
         : null,
       drawMode
         ? h("button", {
             onClick: cancelDrawing,
-            className: "text-xs px-2 py-1 rounded border border-cyan-700 text-cyan-300 hover:bg-cyan-950",
+            className: "editor-btn editor-btn-cancel",
           }, "Annuleer tekenen")
         : h("button", {
             onClick: () => setDrawMode(true),
-            className: "text-xs px-2 py-1 rounded border border-stone-600 text-stone-300 hover:bg-stone-800",
+            className: "editor-btn",
           }, "+ Kamer tekenen"),
       !drawMode
         ? h("button", {
             onClick: addSquareRoom,
-            className: "text-xs px-2 py-1 rounded border border-stone-600 text-stone-300 hover:bg-stone-800",
+            className: "editor-btn",
           }, "+ Vierkant")
         : null
     ),
-    h("div", { className: "px-4 py-2 border-b border-stone-800 text-xs text-stone-500" },
+    h("div", { className: "editor-status" },
       drawMode
         ? `Tekenen: klik om punten neer te zetten (${drawPoints.length} geplaatst) · klik bij het startpunt om te sluiten (min. 3 punten)`
         : pendingEdge
           ? "Klik nu op een wand van een andere kamer om te verbinden · Escape om te annuleren"
           : selected
-            ? `Selected: ${selected.name} — x:${selected.x} y:${selected.y} · Delete/Backspace om te verwijderen`
-            : "Click empty space to deselect · drag a room to move it"
+            ? `Geselecteerd: ${selected.name} — x:${selected.x} y:${selected.y} · pijltjestoetsen om te verplaatsen · Delete/Backspace om te verwijderen`
+            : "Klik op een lege plek om te deselecteren · sleep een kamer om hem te verplaatsen"
     ),
     h("svg", {
       ref: svgRef,
-      className: "flex-1 w-full touch-none select-none",
+      className: "editor-svg",
       viewBox: "0 0 700 500",
       onPointerMove: handlePointerMove,
       onPointerUp: handlePointerUp,
