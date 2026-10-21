@@ -60,7 +60,6 @@
     display: inline;
 }
 
-
 /* Menu Link Styles */
 
 .top-level-menu a /* Apply to all links inside the multi-level menu */
@@ -75,6 +74,14 @@
     line-height: 30px;
 }
 .top-level-menu a:hover { color: #FFFFFF; }
+
+
+
+
+------------------------------------------------------------------------
+
+
+
 .editor-root {
   width: 100%;
   height: 100%;
@@ -112,6 +119,24 @@
 }
 .editor-btn:hover {
   background: orange;
+}
+
+.editor-name-field {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+}
+.editor-name-input {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  border: 2px solid #57534e;
+  width: 10rem;
+}
+.editor-name-input:focus {
+  outline: none;
+  border-color: #ea580c;
 }
 
 .editor-btn-delete {
@@ -155,9 +180,9 @@
   stroke-width: 2;
 }
 
+/* font-size wordt per kamer in editor.js berekend, zodat de naam past */
 .room-label {
   fill: orange;
-  font-size: 9px;
   pointer-events: none;
 }
 
@@ -205,6 +230,27 @@
 }
 .edge-label.is-pending {
   fill: #e0f7fa;
+}
+
+/* Resize-hendels van de geselecteerde kamer */
+.resize-handle {
+  fill: #ffffff;
+  stroke: #ea580c;
+  stroke-width: 1.5;
+}
+.resize-handle:hover {
+  fill: #ea580c;
+}
+.resize-handle-nw,
+.resize-handle-se {
+  cursor: nwse-resize;
+}
+.resize-handle-ne,
+.resize-handle-sw {
+  cursor: nesw-resize;
+}
+.resize-handle-vertex {
+  cursor: move;
 }
 
 /* Preview tijdens het tekenen van een nieuwe (polygon) kamer */
