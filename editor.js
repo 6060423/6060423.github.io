@@ -8,6 +8,14 @@ const initialConnections = [];
 
 const GRID = 10;
 const snap = (v) => Math.round(v / GRID) * GRID;
+const MIN_SIZE = GRID * 2; // kleinste breedte/hoogte die een kamer mag krijgen
+
+// Een "circle" kan na het vergroten/verkleinen ook een ovaal zijn, dus hij
+// heeft een aparte horizontale en verticale straal. Oudere cirkels met
+// alleen `radius` vallen terug op die ene straal.
+function radiiOf(loc) {
+  return [loc.radiusX ?? loc.radius, loc.radiusY ?? loc.radius];
+}
 
 function boundsOf(loc) {
   if (loc.shape === "polygon") {
@@ -48,6 +56,121 @@ function boundsOf(loc) {
   return { centerX: loc.x + loc.width / 2, centerY: loc.y + loc.height / 2 };
 }
 
+// --- Kamernamen passend maken ---------------------------------------------
+// Het label moet binnen de vorm blijven. We zoeken daarom de grootste
+// lettergrootte waarbij de naam past, eventueel verdeeld over meerdere
+// regels. Past het zelfs op de kleinste grootte niet, dan wordt de naam
+// afgekort met "…" (de volledige naam staat dan in de tooltip).
+const LABEL_FONT_FAMILY = "sans-serif";
+const LABEL_MAX_FONT = 9;
+const LABEL_MIN_FONT = 5;
+const LABEL_FONT_STEP = 0.5;
+const LABEL_LINE_HEIGHT = 1.2; // regelhoogte als factor van de lettergrootte
+const LABEL_MAX_LINES = 3;
+const LABEL_PADDING = 3; // minimale ruimte tussen tekst en de rand van de vorm
+
+// Tekstbreedte meten via een (onzichtbaar) canvas. Breedte schaalt lineair
+// met de lettergrootte, dus we meten elke tekst één keer en rekenen om.
+let measureCtx = null;
+const textWidthCache = new Map();
+function textWidth(text, fontSize) {
+  if (!textWidthCache.has(text)) {
+    if (textWidthCache.size > 1000) textWidthCache.clear();
+    measureCtx ??= document.createElement("canvas").getContext("2d");
+    measureCtx.font = `${LABEL_MAX_FONT}px ${LABEL_FONT_FAMILY}`;
+    textWidthCache.set(text, measureCtx.measureText(text).width);
+  }
+  return (textWidthCache.get(text) * fontSize) / LABEL_MAX_FONT;
+}
+
+// Hoeveel ruimte er op hoogte y naar links én rechts is vanaf cx, binnen de
+// vorm (de kleinste van de twee, want het label staat gecentreerd). 0 als y
+// buiten de vorm valt.
+function halfWidthAt(loc, cx, y) {
+  if (loc.shape === "circle") {
+    const [rx, ry] = radiiOf(loc);
+    const dy = (y - loc.y) / ry;
+    if (Math.abs(dy) >= 1) return 0;
+    const half = rx * Math.sqrt(1 - dy * dy);
+    return Math.max(0, Math.min(cx - (loc.x - half), loc.x + half - cx));
+  }
+
+  const pts = loc.shape === "rect"
+    ? [[loc.x, loc.y], [loc.x + loc.width, loc.y], [loc.x + loc.width, loc.y + loc.height], [loc.x, loc.y + loc.height]]
+    : loc.points.map(([px, py]) => [loc.x + px, loc.y + py]);
+
+  // Snijpunten van de horizontale lijn op hoogte y met alle randen; tussen
+  // elk paar opeenvolgende snijpunten zit je binnen de vorm.
+  const xs = [];
+  for (let i = 0; i < pts.length; i++) {
+    const [x0, y0] = pts[i];
+    const [x1, y1] = pts[(i + 1) % pts.length];
+    if ((y0 <= y && y1 > y) || (y1 <= y && y0 > y)) {
+      xs.push(x0 + ((y - y0) / (y1 - y0)) * (x1 - x0));
+    }
+  }
+  xs.sort((a, b) => a - b);
+  for (let i = 0; i + 1 < xs.length; i += 2) {
+    if (xs[i] <= cx && cx <= xs[i + 1]) {
+      return Math.min(cx - xs[i], xs[i + 1] - cx);
+    }
+  }
+  return 0;
+}
+
+// Past `text` op een regel met middelpunt (cx, y)? We kijken naar zowel de
+// boven- als onderkant van de regel, zodat schuine/ronde randen ook kloppen.
+function lineFits(loc, cx, y, fontSize, text) {
+  const halfLine = (LABEL_LINE_HEIGHT * fontSize) / 2;
+  const half = Math.min(halfWidthAt(loc, cx, y - halfLine), halfWidthAt(loc, cx, y + halfLine));
+  return textWidth(text, fontSize) <= 2 * (half - LABEL_PADDING);
+}
+
+// Verdeelt de woorden over precies `lineCount` regels (gecentreerd rond cy),
+// zoveel mogelijk woorden per regel. Geeft null terug als het niet past.
+function wrapIntoLines(loc, cx, cy, fontSize, words, lineCount) {
+  const lineHeight = LABEL_LINE_HEIGHT * fontSize;
+  const firstY = cy - ((lineCount - 1) * lineHeight) / 2;
+  const lines = [];
+  let w = 0;
+  for (let i = 0; i < lineCount && w < words.length; i++) {
+    const y = firstY + i * lineHeight;
+    let text = words[w];
+    if (!lineFits(loc, cx, y, fontSize, text)) return null;
+    w++;
+    while (w < words.length && lineFits(loc, cx, y, fontSize, `${text} ${words[w]}`)) {
+      text += ` ${words[w]}`;
+      w++;
+    }
+    lines.push({ text, y });
+  }
+  return w === words.length && lines.length === lineCount ? lines : null;
+}
+
+// Bepaalt lettergrootte en regels voor het label van een kamer.
+function layoutLabel(loc, cx, cy) {
+  const name = loc.name.trim();
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return { fontSize: LABEL_MAX_FONT, lines: [] };
+
+  for (let fontSize = LABEL_MAX_FONT; fontSize >= LABEL_MIN_FONT; fontSize -= LABEL_FONT_STEP) {
+    for (let lineCount = 1; lineCount <= Math.min(LABEL_MAX_LINES, words.length); lineCount++) {
+      const lines = wrapIntoLines(loc, cx, cy, fontSize, words, lineCount);
+      if (lines) return { fontSize, lines };
+    }
+  }
+
+  // Past nergens: op de kleinste grootte afkorten tot het wel past.
+  let text = name;
+  while (text.length > 0 && !lineFits(loc, cx, cy, LABEL_MIN_FONT, `${text.trimEnd()}…`)) {
+    text = text.slice(0, -1);
+  }
+  return {
+    fontSize: LABEL_MIN_FONT,
+    lines: text.length > 0 ? [{ text: `${text.trimEnd()}…`, y: cy }] : [],
+  };
+}
+
 // Geeft de losse rechte randen (wanden) van een kamer terug, elk met het
 // midden van die rand — dat is waar het "+"-knopje komt te staan.
 // Voor circles bestaan er geen rechte lijnen, dus die krijgen in plaats
@@ -73,14 +196,96 @@ function edgesOf(loc) {
     });
   }
   if (loc.shape === "circle") {
+    const [rx, ry] = radiiOf(loc);
     return [
-      { mid: [loc.x, loc.y - loc.radius] },
-      { mid: [loc.x + loc.radius, loc.y] },
-      { mid: [loc.x, loc.y + loc.radius] },
-      { mid: [loc.x - loc.radius, loc.y] },
+      { mid: [loc.x, loc.y - ry] },
+      { mid: [loc.x + rx, loc.y] },
+      { mid: [loc.x, loc.y + ry] },
+      { mid: [loc.x - rx, loc.y] },
     ];
   }
   return [];
+}
+
+// Geeft de resize-hendels van een kamer terug, elk met een id (welke hendel
+// het is) en een absolute positie. Rechthoeken en cirkels krijgen hendels
+// op de hoeken (van hun bounding box) — de randmiddens zijn al bezet door de
+// "+"-knopjes om kamers te verbinden. Polygons krijgen een hendel op elk
+// hoekpunt, zodat je de vorm zelf kunt vervormen.
+function resizeHandlesOf(loc) {
+  if (loc.shape === "rect") {
+    return [
+      { id: "nw", pos: [loc.x, loc.y] },
+      { id: "ne", pos: [loc.x + loc.width, loc.y] },
+      { id: "se", pos: [loc.x + loc.width, loc.y + loc.height] },
+      { id: "sw", pos: [loc.x, loc.y + loc.height] },
+    ];
+  }
+  if (loc.shape === "circle") {
+    const [rx, ry] = radiiOf(loc);
+    return [
+      { id: "nw", pos: [loc.x - rx, loc.y - ry] },
+      { id: "ne", pos: [loc.x + rx, loc.y - ry] },
+      { id: "se", pos: [loc.x + rx, loc.y + ry] },
+      { id: "sw", pos: [loc.x - rx, loc.y + ry] },
+    ];
+  }
+  if (loc.shape === "polygon") {
+    return loc.points.map(([px, py], i) => ({ id: i, pos: [loc.x + px, loc.y + py] }));
+  }
+  return [];
+}
+
+// Berekent de nieuwe kamer terwijl je een hendel versleept. `start` is de
+// kamer zoals hij was bij het begin van het slepen, (x, y) is de huidige
+// muispositie in SVG-coördinaten. Met keepRatio (Shift ingedrukt) blijft
+// een rechthoek een vierkant en een ovaal een cirkel.
+function resizeLocation(start, handle, x, y, keepRatio) {
+  if (start.shape === "rect") {
+    // De hoek tegenover de hendel blijft op zijn plek staan.
+    const right = start.x + start.width;
+    const bottom = start.y + start.height;
+    const fixedX = handle.includes("w") ? right : start.x;
+    const fixedY = handle.includes("n") ? bottom : start.y;
+    let width = Math.max(MIN_SIZE, handle.includes("w") ? fixedX - snap(x) : snap(x) - fixedX);
+    let height = Math.max(MIN_SIZE, handle.includes("n") ? fixedY - snap(y) : snap(y) - fixedY);
+    if (keepRatio) {
+      width = height = Math.max(width, height);
+    }
+    return {
+      ...start,
+      x: handle.includes("w") ? fixedX - width : fixedX,
+      y: handle.includes("n") ? fixedY - height : fixedY,
+      width,
+      height,
+    };
+  }
+  if (start.shape === "circle") {
+    // Het middelpunt blijft staan; de afstand tot de muis bepaalt de stralen.
+    let radiusX = Math.max(MIN_SIZE / 2, snap(Math.abs(x - start.x)));
+    let radiusY = Math.max(MIN_SIZE / 2, snap(Math.abs(y - start.y)));
+    if (keepRatio) {
+      radiusX = radiusY = Math.max(radiusX, radiusY);
+    }
+    const { radius, ...rest } = start;
+    return { ...rest, radiusX, radiusY };
+  }
+  if (start.shape === "polygon") {
+    // Eén hoekpunt verplaatsen, en daarna de punten opnieuw relatief maken
+    // t.o.v. de linkerbovenhoek van de bounding box (net als finishDrawing).
+    const abs = start.points.map(([px, py], i) =>
+      i === handle ? [snap(x), snap(y)] : [start.x + px, start.y + py]
+    );
+    const originX = Math.min(...abs.map((p) => p[0]));
+    const originY = Math.min(...abs.map((p) => p[1]));
+    return {
+      ...start,
+      x: originX,
+      y: originY,
+      points: abs.map(([px, py]) => [px - originX, py - originY]),
+    };
+  }
+  return start;
 }
 
 function MapEditorPOC() {
@@ -89,10 +294,12 @@ function MapEditorPOC() {
   const [connections, setConnections] = useState(initialConnections);
   const [selectedId, setSelectedId] = useState(null);
   const [dragging, setDragging] = useState(null);
+  const [resizing, setResizing] = useState(null); // { id, handle, start } — hendel die je nu versleept
   const [drawMode, setDrawMode] = useState(false);
   const [drawPoints, setDrawPoints] = useState([]); // array van [x, y], absolute SVG-coördinaten
   const [pendingEdge, setPendingEdge] = useState(null); // { locId, edgeIndex } — eerste wand die je hebt aangeklikt
   const svgRef = useRef(null);
+  const nameInputRef = useRef(null);
 
   const CLOSE_DISTANCE = 16; // klik binnen dit aantal px van het startpunt = vorm sluiten
   let nextRoomNumber = locations.length + 1;
@@ -113,7 +320,18 @@ function MapEditorPOC() {
     setDragging({ id: loc.id, offsetX: x - loc.x, offsetY: y - loc.y });
   };
 
+  const handleResizeStart = (e, loc, handle) => {
+    e.stopPropagation();
+    setResizing({ id: loc.id, handle, start: loc });
+  };
+
   const handlePointerMove = (e) => {
+    if (resizing) {
+      const { x, y } = toSvgPoint(e.clientX, e.clientY);
+      const resized = resizeLocation(resizing.start, resizing.handle, x, y, e.shiftKey);
+      setLocations((prev) => prev.map((loc) => (loc.id === resizing.id ? resized : loc)));
+      return;
+    }
     if (!dragging) return;
     const { x, y } = toSvgPoint(e.clientX, e.clientY);
     setLocations((prev) =>
@@ -125,7 +343,10 @@ function MapEditorPOC() {
     );
   };
 
-  const handlePointerUp = () => setDragging(null);
+  const handlePointerUp = () => {
+    setDragging(null);
+    setResizing(null);
+  };
   const selected = locations.find((l) => l.id === selectedId);
 
   // Live preview terwijl je tekent: lijn tussen de al geplaatste punten,
@@ -220,6 +441,24 @@ function MapEditorPOC() {
     setLocations((prev) => [...prev, newRoom]);
   };
 
+  // Zet in één klik een cirkel neer, net als addSquareRoom. Let op: bij een
+  // circle zijn x/y het middelpunt (niet de linkerbovenhoek). De cirkels
+  // komen op een rij onder de vierkanten, zodat ze daar niet op landen.
+  const CIRCLE_RADIUS = SQUARE_SIZE / 2;
+  const addCircleRoom = () => {
+    const offset = (locations.length % 6) * (CIRCLE_RADIUS * 2 + GRID);
+    const newRoom = {
+      id: `loc_${Date.now()}`,
+      name: `Kamer ${nextRoomNumber}`,
+      shape: "circle",
+      x: snap(40 + CIRCLE_RADIUS + offset),
+      y: snap(40 + SQUARE_SIZE + 2 * GRID + CIRCLE_RADIUS),
+      radiusX: CIRCLE_RADIUS,
+      radiusY: CIRCLE_RADIUS,
+    };
+    setLocations((prev) => [...prev, newRoom]);
+  };
+
   // Verwijdert de geselecteerde kamer, en ook alle connections die naar
   // (of vanaf) die kamer verwezen — anders blijft er een "dode" lijn hangen
   // die verwijst naar een kamer die niet meer bestaat.
@@ -239,6 +478,27 @@ function MapEditorPOC() {
     ArrowRight: [1, 0],
   };
 
+  // Hernoemt de geselecteerde kamer. Tijdens het typen mag de naam even leeg
+  // zijn; pas bij het verlaten van het veld (of als je een andere kamer
+  // selecteert) vullen we lege namen aan, zodat er geen kamer zonder label op
+  // de kaart blijft staan. Dit gebeurt voor álle kamers, omdat het veld bij
+  // het wisselen van selectie al bij de nieuwe kamer hoort.
+  const renameSelectedRoom = (name) => {
+    setLocations((prev) =>
+      prev.map((loc) => (loc.id === selectedId ? { ...loc, name } : loc))
+    );
+  };
+
+  const finishRenaming = () => {
+    setLocations((prev) =>
+      prev.some((loc) => loc.name.trim() === "")
+        ? prev.map((loc) => (loc.name.trim() === "" ? { ...loc, name: "Naamloze kamer" } : loc))
+        : prev
+    );
+  };
+
+  useEffect(finishRenaming, [selectedId]);
+
   const moveSelectedRoom = (dx, dy) => {
     setLocations((prev) =>
       prev.map((loc) =>
@@ -254,6 +514,9 @@ function MapEditorPOC() {
   useEffect(() => {
     const onKeyDown = (e) => {
       if (drawMode) return;
+      // Typ je in een tekstveld (zoals de kamernaam), dan zijn Backspace en
+      // de pijltjes voor het veld zelf — niet om de kamer te verwijderen/verplaatsen.
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
         e.preventDefault();
         deleteSelectedRoom();
@@ -358,21 +621,31 @@ function MapEditorPOC() {
         points: loc.points.map(([px, py]) => `${loc.x + px},${loc.y + py}`).join(" "),
       });
     } else if (loc.shape === "circle") {
-      shapeEl = h("circle", { className: shapeClassName, cx: loc.x, cy: loc.y, r: loc.radius });
+      const [rx, ry] = radiiOf(loc);
+      shapeEl = h("ellipse", { className: shapeClassName, cx: loc.x, cy: loc.y, rx, ry });
     } else {
       shapeEl = h("rect", { className: shapeClassName, x: loc.x, y: loc.y, width: loc.width, height: loc.height, rx: 4 });
     }
 
+    // Lettergrootte via `style` i.p.v. een attribuut: CSS gaat namelijk
+    // boven SVG-presentatieattributen.
+    const labelLayout = layoutLabel(loc, centerX, centerY);
     const label = h("text", {
       className: "room-label",
-      x: centerX, y: centerY, textAnchor: "middle", dominantBaseline: "middle",
-    }, loc.name);
+      textAnchor: "middle",
+      style: { fontSize: `${labelLayout.fontSize}px`, fontFamily: LABEL_FONT_FAMILY },
+    }, ...labelLayout.lines.map((line, i) =>
+      h("tspan", { key: i, x: centerX, y: line.y, dominantBaseline: "middle" }, line.text)
+    ));
 
+    // Dubbelklik op een kamer = meteen de naam bewerken. De <title> geeft
+    // een tooltip met de volledige naam (handig als hij afgekort is).
     return h("g", {
       key: loc.id,
       className: `room-group${dragging?.id === loc.id ? " is-dragging" : ""}`,
       onPointerDown: (e) => handlePointerDown(e, loc),
-    }, shapeEl, label);
+      onDoubleClick: () => nameInputRef.current?.select(),
+    }, h("title", null, loc.name), shapeEl, label);
   });
 
   // Eén "+"-knopje per wand van elke kamer. Niet zichtbaar tijdens het
@@ -403,8 +676,38 @@ function MapEditorPOC() {
     });
   }
 
+  // Resize-hendels, alleen voor de geselecteerde kamer en niet tijdens het
+  // tekenen. Ze staan bovenop de rest, zodat je ze altijd kunt pakken.
+  const resizeHandleEls = !drawMode && selected
+    ? resizeHandlesOf(selected).map(({ id, pos: [hx, hy] }) =>
+        h("rect", {
+          key: `resize_${selected.id}_${id}`,
+          className: `resize-handle resize-handle-${selected.shape === "polygon" ? "vertex" : id}`,
+          x: hx - 4, y: hy - 4, width: 8, height: 8,
+          onPointerDown: (e) => handleResizeStart(e, selected, id),
+        })
+      )
+    : [];
+
   return h("div", { className: "editor-root" },
     h("div", { className: "editor-toolbar" },
+      selected && !drawMode
+        ? h("label", { className: "editor-name-field" },
+            "Naam:",
+            h("input", {
+              ref: nameInputRef,
+              type: "text",
+              className: "editor-name-input",
+              value: selected.name,
+              maxLength: 60,
+              onChange: (e) => renameSelectedRoom(e.target.value),
+              onBlur: finishRenaming,
+              onKeyDown: (e) => {
+                if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur();
+              },
+            })
+          )
+        : null,
       selected && !drawMode
         ? h("button", {
             onClick: deleteSelectedRoom,
@@ -425,6 +728,12 @@ function MapEditorPOC() {
             onClick: addSquareRoom,
             className: "editor-btn",
           }, "+ Vierkant")
+        : null,
+      !drawMode
+        ? h("button", {
+            onClick: addCircleRoom,
+            className: "editor-btn",
+          }, "+ Cirkel")
         : null
     ),
     h("div", { className: "editor-status" },
@@ -433,7 +742,7 @@ function MapEditorPOC() {
         : pendingEdge
           ? "Klik nu op een wand van een andere kamer om te verbinden · Escape om te annuleren"
           : selected
-            ? `Geselecteerd: ${selected.name} — x:${selected.x} y:${selected.y} · pijltjestoetsen om te verplaatsen · Delete/Backspace om te verwijderen`
+            ? `Geselecteerd: ${selected.name} — x:${selected.x} y:${selected.y} · dubbelklik om te hernoemen · sleep een hendel om te vergroten/verkleinen (Shift = verhouding behouden) · pijltjestoetsen om te verplaatsen · Delete/Backspace om te verwijderen`
             : "Klik op een lege plek om te deselecteren · sleep een kamer om hem te verplaatsen"
     ),
     h("svg", {
@@ -454,6 +763,7 @@ function MapEditorPOC() {
       ...connectionEls,
       ...roomEls,
       ...edgeButtonEls,
+      ...resizeHandleEls,
       drawPreviewLine,
       ...drawPreviewDots
     )
