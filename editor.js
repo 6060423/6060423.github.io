@@ -288,11 +288,94 @@ function resizeLocation(start, handle, x, y, keepRatio) {
   return start;
 }
 
+// Ligt punt (x, y) binnen de kamer? Rechthoek en ovaal rekenen we direct
+// uit, voor polygons gebruiken we ray casting (tel hoe vaak een lijn naar
+// rechts de randen kruist: oneven = binnen).
+function containsPoint(loc, x, y) {
+  if (loc.shape === "rect") {
+    return x >= loc.x && x <= loc.x + loc.width && y >= loc.y && y <= loc.y + loc.height;
+  }
+  if (loc.shape === "circle") {
+    const [rx, ry] = radiiOf(loc);
+    const dx = (x - loc.x) / rx;
+    const dy = (y - loc.y) / ry;
+    return dx * dx + dy * dy <= 1;
+  }
+  if (loc.shape === "polygon") {
+    const pts = loc.points.map(([px, py]) => [loc.x + px, loc.y + py]);
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i];
+      const [xj, yj] = pts[j];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+  return false;
+}
+
+// De bovenste kamer (laatst getekend) op punt (x, y), of undefined.
+function roomAt(locations, x, y) {
+  return locations.findLast((loc) => containsPoint(loc, x, y));
+}
+
+// --- Items in kamers ---------------------------------------------------------
+// Voorlopig krijgt elk item hetzelfde placeholder-plaatje (in de kleur van
+// zijn categorie) met de naam eronder. Later kunnen hier echte iconen komen.
+const ITEM_DRAG_TYPE = "application/x-map-item";
+const ITEM_SIZE = 18; // breedte/hoogte van een item op de kaart
+const ITEM_SNAP = GRID / 2;
+const snapItem = (v) => Math.round(v / ITEM_SNAP) * ITEM_SNAP;
+
+const ITEM_CATEGORIES = {
+  loot: { label: "Buit", color: "#ca8a04" },
+  monster: { label: "Monsters", color: "#dc2626" },
+  trap: { label: "Valstrikken", color: "#7c3aed" },
+  object: { label: "Inrichting", color: "#57534e" },
+};
+
+const ITEM_TYPES = [
+  { type: "chest", label: "Schatkist", category: "loot" },
+  { type: "gold", label: "Goudstapel", category: "loot" },
+  { type: "potion", label: "Toverdrank", category: "loot" },
+  { type: "goblin", label: "Goblin", category: "monster" },
+  { type: "skeleton", label: "Skelet", category: "monster" },
+  { type: "orc", label: "Ork", category: "monster" },
+  { type: "spider", label: "Reuzenspin", category: "monster" },
+  { type: "spike_trap", label: "Spiesvalstrik", category: "trap" },
+  { type: "pit_trap", label: "Valkuil", category: "trap" },
+  { type: "arrow_trap", label: "Pijlvalstrik", category: "trap" },
+  { type: "bear_trap", label: "Berenklem", category: "trap" },
+  { type: "torch", label: "Fakkel", category: "object" },
+  { type: "barrel", label: "Ton", category: "object" },
+  { type: "altar", label: "Altaar", category: "object" },
+];
+const itemTypeOf = (type) => ITEM_TYPES.find((t) => t.type === type);
+const itemColorOf = (type) => ITEM_CATEGORIES[itemTypeOf(type)?.category]?.color ?? "#57534e";
+
+// Placeholder-plaatje in een 24x24 viewBox: gestippeld vlak met een kruis.
+function placeholderGlyph(color) {
+  return h("g", null,
+    h("rect", {
+      x: 2, y: 2, width: 20, height: 20, rx: 3,
+      fill: color, fillOpacity: 0.12, stroke: color, strokeWidth: 1.5, strokeDasharray: "3 2",
+    }),
+    h("path", { d: "M7 7L17 17M17 7L7 17", stroke: color, strokeWidth: 1.2, strokeOpacity: 0.6 })
+  );
+}
+
 function MapEditorPOC() {
   const [kamer, setKamer] = useState("");
   const [locations, setLocations] = useState(initialLocations);
   const [connections, setConnections] = useState(initialConnections);
+  const [items, setItems] = useState([]); // { id, type, roomId, x, y } — x/y is het midden, absoluut
   const [selectedId, setSelectedId] = useState(null);
+  const [selectedItemId, setSelectedItemId] = useState(null);
+  const [draggingItem, setDraggingItem] = useState(null); // { id, offsetX, offsetY, startX, startY }
+  const [dropTargetId, setDropTargetId] = useState(null); // kamer waar een item nu boven hangt
+  const [hint, setHint] = useState(null); // korte melding in de statusbalk
   const [dragging, setDragging] = useState(null);
   const [resizing, setResizing] = useState(null); // { id, handle, start } — hendel die je nu versleept
   const [drawMode, setDrawMode] = useState(false);
@@ -313,11 +396,32 @@ function MapEditorPOC() {
     return pt.matrixTransform(screenCTM.inverse());
   }, []);
 
+  // Bij het slepen van een kamer onthouden we ook waar de kamer en zijn
+  // items begonnen, zodat de items precies even ver meeschuiven.
   const handlePointerDown = (e, loc) => {
     e.stopPropagation();
     setSelectedId(loc.id);
+    setSelectedItemId(null);
     const { x, y } = toSvgPoint(e.clientX, e.clientY);
-    setDragging({ id: loc.id, offsetX: x - loc.x, offsetY: y - loc.y });
+    const itemStarts = Object.fromEntries(
+      items.filter((it) => it.roomId === loc.id).map((it) => [it.id, [it.x, it.y]])
+    );
+    setDragging({ id: loc.id, offsetX: x - loc.x, offsetY: y - loc.y, roomX: loc.x, roomY: loc.y, itemStarts });
+  };
+
+  const handleItemPointerDown = (e, item) => {
+    if (drawMode) return; // klik gaat door naar de canvas om een punt te zetten
+    e.stopPropagation();
+    setSelectedItemId(item.id);
+    setSelectedId(null);
+    setPendingEdge(null);
+    const { x, y } = toSvgPoint(e.clientX, e.clientY);
+    setDraggingItem({ id: item.id, offsetX: x - item.x, offsetY: y - item.y, startX: item.x, startY: item.y });
+  };
+
+  const showHint = (text) => {
+    setHint(text);
+    setTimeout(() => setHint((current) => (current === text ? null : current)), 2500);
   };
 
   const handleResizeStart = (e, loc, handle) => {
@@ -332,22 +436,86 @@ function MapEditorPOC() {
       setLocations((prev) => prev.map((loc) => (loc.id === resizing.id ? resized : loc)));
       return;
     }
+    if (draggingItem) {
+      const { x, y } = toSvgPoint(e.clientX, e.clientY);
+      const itemX = snapItem(x - draggingItem.offsetX);
+      const itemY = snapItem(y - draggingItem.offsetY);
+      setItems((prev) => prev.map((it) => (it.id === draggingItem.id ? { ...it, x: itemX, y: itemY } : it)));
+      setDropTargetId(roomAt(locations, itemX, itemY)?.id ?? null);
+      return;
+    }
     if (!dragging) return;
     const { x, y } = toSvgPoint(e.clientX, e.clientY);
+    const newX = snap(x - dragging.offsetX);
+    const newY = snap(y - dragging.offsetY);
+    const dx = newX - dragging.roomX;
+    const dy = newY - dragging.roomY;
     setLocations((prev) =>
-      prev.map((loc) =>
-        loc.id === dragging.id
-          ? { ...loc, x: snap(x - dragging.offsetX), y: snap(y - dragging.offsetY) }
-          : loc
-      )
+      prev.map((loc) => (loc.id === dragging.id ? { ...loc, x: newX, y: newY } : loc))
+    );
+    setItems((prev) =>
+      prev.map((it) => {
+        const start = dragging.itemStarts[it.id];
+        return start ? { ...it, x: start[0] + dx, y: start[1] + dy } : it;
+      })
     );
   };
 
+  // Een item loslaten buiten elke kamer zet hem terug waar hij vandaan kwam;
+  // loslaten in een (andere) kamer maakt hem onderdeel van die kamer.
+  const finishItemDrag = () => {
+    const item = items.find((it) => it.id === draggingItem.id);
+    const room = item && roomAt(locations, item.x, item.y);
+    setItems((prev) =>
+      prev.map((it) => {
+        if (it.id !== draggingItem.id) return it;
+        return room ? { ...it, roomId: room.id } : { ...it, x: draggingItem.startX, y: draggingItem.startY };
+      })
+    );
+    if (item && !room) showHint("Items kunnen alleen in een kamer staan");
+    setDraggingItem(null);
+    setDropTargetId(null);
+  };
+
   const handlePointerUp = () => {
+    if (draggingItem) finishItemDrag();
     setDragging(null);
     setResizing(null);
   };
+
+  // Slepen vanuit het itempaneel (HTML5 drag & drop). Tijdens het slepen
+  // licht de kamer onder de muis op; loslaten buiten een kamer doet niks.
+  const handleDragOver = (e) => {
+    if (!e.dataTransfer.types.includes(ITEM_DRAG_TYPE)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    const { x, y } = toSvgPoint(e.clientX, e.clientY);
+    const targetId = roomAt(locations, x, y)?.id ?? null;
+    if (targetId !== dropTargetId) setDropTargetId(targetId);
+  };
+
+  const handleDragLeave = (e) => {
+    if (!svgRef.current.contains(e.relatedTarget)) setDropTargetId(null);
+  };
+
+  const handleDrop = (e) => {
+    const type = e.dataTransfer.getData(ITEM_DRAG_TYPE);
+    setDropTargetId(null);
+    if (!itemTypeOf(type)) return;
+    e.preventDefault();
+    const { x, y } = toSvgPoint(e.clientX, e.clientY);
+    const room = roomAt(locations, x, y);
+    if (!room) {
+      showHint("Sleep het item in een kamer");
+      return;
+    }
+    const newItem = { id: `item_${Date.now()}`, type, roomId: room.id, x: snapItem(x), y: snapItem(y) };
+    setItems((prev) => [...prev, newItem]);
+    setSelectedItemId(newItem.id);
+    setSelectedId(null);
+  };
   const selected = locations.find((l) => l.id === selectedId);
+  const selectedItem = items.find((it) => it.id === selectedItemId);
 
   // Live preview terwijl je tekent: lijn tussen de al geplaatste punten,
   // en een cirkeltje op elk punt (het eerste punt iets groter/anders
@@ -373,6 +541,7 @@ function MapEditorPOC() {
   const handleCanvasPointerDown = (e) => {
     if (!drawMode) {
       setSelectedId(null);
+      setSelectedItemId(null);
       setPendingEdge(null);
       return;
     }
@@ -461,12 +630,20 @@ function MapEditorPOC() {
 
   // Verwijdert de geselecteerde kamer, en ook alle connections die naar
   // (of vanaf) die kamer verwezen — anders blijft er een "dode" lijn hangen
-  // die verwijst naar een kamer die niet meer bestaat.
+  // die verwijst naar een kamer die niet meer bestaat. De items in de kamer
+  // gaan ook weg.
   const deleteSelectedRoom = () => {
     if (!selectedId) return;
     setLocations((prev) => prev.filter((loc) => loc.id !== selectedId));
     setConnections((prev) => prev.filter((conn) => conn.from !== selectedId && conn.to !== selectedId));
+    setItems((prev) => prev.filter((it) => it.roomId !== selectedId));
     setSelectedId(null);
+  };
+
+  const deleteSelectedItem = () => {
+    if (!selectedItemId) return;
+    setItems((prev) => prev.filter((it) => it.id !== selectedItemId));
+    setSelectedItemId(null);
   };
 
   // Delete/Backspace verwijdert de geselecteerde kamer, Escape annuleert
@@ -505,6 +682,11 @@ function MapEditorPOC() {
         loc.id === selectedId ? { ...loc, x: loc.x + dx * GRID, y: loc.y + dy * GRID } : loc
       )
     );
+    setItems((prev) =>
+      prev.map((it) =>
+        it.roomId === selectedId ? { ...it, x: it.x + dx * GRID, y: it.y + dy * GRID } : it
+      )
+    );
   };
 
   // Delete/Backspace verwijdert de geselecteerde kamer, Escape annuleert
@@ -517,6 +699,10 @@ function MapEditorPOC() {
       // Typ je in een tekstveld (zoals de kamernaam), dan zijn Backspace en
       // de pijltjes voor het veld zelf — niet om de kamer te verwijderen/verplaatsen.
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedItemId) {
+        e.preventDefault();
+        deleteSelectedItem();
+      }
       if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
         e.preventDefault();
         deleteSelectedRoom();
@@ -532,7 +718,7 @@ function MapEditorPOC() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [drawMode, selectedId, pendingEdge]);
+  }, [drawMode, selectedId, selectedItemId, pendingEdge]);
 
   // Klik op een wand-knopje: eerste klik onthoudt welke wand je hebt
   // gekozen (pendingEdge); een tweede klik op een wand van een ándere
@@ -611,7 +797,7 @@ function MapEditorPOC() {
 
   const roomEls = locations.map((loc) => {
     const isSelected = loc.id === selectedId;
-    const shapeClassName = `room-shape${isSelected ? " is-selected" : ""}`;
+    const shapeClassName = `room-shape${isSelected ? " is-selected" : ""}${loc.id === dropTargetId ? " is-drop-target" : ""}`;
     const { centerX, centerY } = boundsOf(loc);
 
     let shapeEl;
@@ -647,6 +833,52 @@ function MapEditorPOC() {
       onDoubleClick: () => nameInputRef.current?.select(),
     }, h("title", null, loc.name), shapeEl, label);
   });
+
+  // Items op de kaart: het placeholder-plaatje (een geneste <svg> zodat we
+  // dezelfde 24x24 glyph als in het paneel kunnen gebruiken) met de naam eronder.
+  const itemEls = items.map((item) => {
+    const label = itemTypeOf(item.type)?.label ?? item.type;
+    const half = ITEM_SIZE / 2;
+    const classes = `map-item${item.id === selectedItemId ? " is-selected" : ""}${draggingItem?.id === item.id ? " is-dragging" : ""}`;
+    return h("g", {
+      key: item.id,
+      className: classes,
+      onPointerDown: (e) => handleItemPointerDown(e, item),
+    },
+      h("title", null, label),
+      h("rect", { className: "map-item-outline", x: item.x - half - 2, y: item.y - half - 2, width: ITEM_SIZE + 4, height: ITEM_SIZE + 4, rx: 3 }),
+      h("svg", { x: item.x - half, y: item.y - half, width: ITEM_SIZE, height: ITEM_SIZE, viewBox: "0 0 24 24" },
+        placeholderGlyph(itemColorOf(item.type))
+      ),
+      h("text", { className: "map-item-label", x: item.x, y: item.y + half + 5, textAnchor: "middle" }, label)
+    );
+  });
+
+  // Het paneel met items om de kaart op te slepen, gegroepeerd per categorie.
+  const paletteEl = h("div", { className: "editor-palette" },
+    ...Object.entries(ITEM_CATEGORIES).map(([category, { label }]) =>
+      h("div", { key: category, className: "editor-palette-group" },
+        h("div", { className: "editor-palette-heading" }, label),
+        h("div", { className: "editor-palette-items" },
+          ...ITEM_TYPES.filter((t) => t.category === category).map((t) =>
+            h("div", {
+              key: t.type,
+              className: "editor-palette-item",
+              draggable: true,
+              title: `Sleep ${t.label} naar een kamer`,
+              onDragStart: (e) => {
+                e.dataTransfer.setData(ITEM_DRAG_TYPE, t.type);
+                e.dataTransfer.effectAllowed = "copy";
+              },
+            },
+              h("svg", { viewBox: "0 0 24 24", width: 32, height: 32 }, placeholderGlyph(itemColorOf(t.type))),
+              h("span", null, t.label)
+            )
+          )
+        )
+      )
+    )
+  );
 
   // Eén "+"-knopje per wand van elke kamer. Niet zichtbaar tijdens het
   // tekenen. De wand die als eerste is aangeklikt (pendingEdge) licht op
@@ -714,6 +946,12 @@ function MapEditorPOC() {
             className: "editor-btn editor-btn-delete",
           }, "Verwijder kamer")
         : null,
+      selectedItem && !drawMode
+        ? h("button", {
+            onClick: deleteSelectedItem,
+            className: "editor-btn editor-btn-delete",
+          }, "Verwijder item")
+        : null,
       drawMode
         ? h("button", {
             onClick: cancelDrawing,
@@ -737,14 +975,20 @@ function MapEditorPOC() {
         : null
     ),
     h("div", { className: "editor-status" },
-      drawMode
+      hint
+        ? hint
+        : drawMode
         ? `Tekenen: klik om punten neer te zetten (${drawPoints.length} geplaatst) · klik bij het startpunt om te sluiten (min. 3 punten)`
         : pendingEdge
           ? "Klik nu op een wand van een andere kamer om te verbinden · Escape om te annuleren"
+          : selectedItem
+            ? `Item: ${itemTypeOf(selectedItem.type)?.label} in ${locations.find((l) => l.id === selectedItem.roomId)?.name ?? "?"} · sleep om te verplaatsen (ook naar een andere kamer) · Delete/Backspace om te verwijderen`
           : selected
             ? `Geselecteerd: ${selected.name} — x:${selected.x} y:${selected.y} · dubbelklik om te hernoemen · sleep een hendel om te vergroten/verkleinen (Shift = verhouding behouden) · pijltjestoetsen om te verplaatsen · Delete/Backspace om te verwijderen`
-            : "Klik op een lege plek om te deselecteren · sleep een kamer om hem te verplaatsen"
+            : "Klik op een lege plek om te deselecteren · sleep een kamer om hem te verplaatsen · sleep items uit het paneel links een kamer in"
     ),
+    h("div", { className: "editor-body" },
+    paletteEl,
     h("svg", {
       ref: svgRef,
       className: "editor-svg",
@@ -753,6 +997,9 @@ function MapEditorPOC() {
       onPointerUp: handlePointerUp,
       onPointerLeave: handlePointerUp,
       onPointerDown: handleCanvasPointerDown,
+      onDragOver: handleDragOver,
+      onDragLeave: handleDragLeave,
+      onDrop: handleDrop,
     },
       h("defs", null,
         h("pattern", { id: "grid", width: GRID, height: GRID, patternUnits: "userSpaceOnUse" },
@@ -762,10 +1009,12 @@ function MapEditorPOC() {
       h("rect", { width: "1000", height: "1000", fill: "url(#grid)" }),
       ...connectionEls,
       ...roomEls,
+      ...itemEls,
       ...edgeButtonEls,
       ...resizeHandleEls,
       drawPreviewLine,
       ...drawPreviewDots
+    )
     )
   );
 }
