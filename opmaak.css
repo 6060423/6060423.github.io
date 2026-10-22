@@ -155,11 +155,61 @@
   background: #0d4408;
 }
 
+.editor-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
 .editor-svg {
   flex: 1 1 auto;
   width: 100%;
+  min-width: 0;
   touch-action: none;
   user-select: none;
+}
+
+/* Itempaneel: items die je een kamer in kunt slepen */
+.editor-palette {
+  flex: 0 0 11rem;
+  border-right: 1px solid #292524;
+  padding: 0.5rem;
+  overflow-y: auto;
+}
+.editor-palette-group + .editor-palette-group {
+  margin-top: 0.75rem;
+}
+.editor-palette-heading {
+  font-size: 0.7rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: #78716c;
+  margin-bottom: 0.25rem;
+}
+.editor-palette-items {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem;
+}
+.editor-palette-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.25rem;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
+  font-size: 0.65rem;
+  text-align: center;
+  cursor: grab;
+  user-select: none;
+}
+.editor-palette-item:hover {
+  border-color: #ea580c;
+  background: #fff7ed;
+}
+.editor-palette-item:active {
+  cursor: grabbing;
 }
 
 /* Kamers */
@@ -178,6 +228,36 @@
 .room-shape.is-selected {
   stroke: #ea580c;
   stroke-width: 2;
+}
+.room-shape.is-drop-target {
+  fill: #fff7ed;
+  stroke: #ea580c;
+  stroke-dasharray: 4 3;
+}
+
+/* Items in kamers */
+.map-item {
+  cursor: grab;
+}
+.map-item.is-dragging {
+  cursor: grabbing;
+}
+.map-item-outline {
+  fill: transparent;
+  stroke: none;
+}
+.map-item.is-selected .map-item-outline {
+  stroke: #ea580c;
+  stroke-width: 1.2;
+}
+.map-item-label {
+  font-size: 5px;
+  font-family: sans-serif;
+  fill: #292524;
+  stroke: #ffffff;
+  stroke-width: 1.5px;
+  paint-order: stroke;
+  pointer-events: none;
 }
 
 /* font-size wordt per kamer in editor.js berekend, zodat de naam past */
