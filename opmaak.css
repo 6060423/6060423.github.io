@@ -349,3 +349,66 @@
 .draw-dot.is-first {
   fill: #ee2222;
 }
+.editor-palette-item {
+  position: relative;
+}
+.editor-palette-item-delete {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: #78716c;
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+.editor-palette-item:hover .editor-palette-item-delete,
+.editor-palette-item-delete:focus {
+  opacity: 1;
+}
+.editor-palette-item-delete:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+/* Formulier voor eigen items */
+.editor-custom-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+.editor-custom-name {
+  width: 100%;
+  box-sizing: border-box;
+}
+.editor-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.editor-custom-color {
+  width: 2rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 2px solid #57534e;
+  border-radius: 0.25rem;
+  cursor: pointer;
+}
+.editor-custom-row .editor-btn {
+  flex: 1 1 auto;
+}
+.editor-custom-row .editor-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.editor-palette-empty {
+  font-size: 0.65rem;
+  color: #a8a29e;
+}
