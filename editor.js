@@ -481,6 +481,57 @@ function containsProfanity(text) {
   );
 }
 
+// --- Kaart opslaan/openen als .json -----------------------------------------
+const MAP_FILE_FORMAT = "map-editor";
+const MAP_FILE_VERSION = 1;
+
+const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+
+// Controleert een ingelezen kaartbestand en gooit alles weg wat niet klopt,
+// zodat een kapot of aangepast bestand de editor niet kan laten crashen.
+function parseMapFile(data) {
+  if (!data || typeof data !== "object" || !Array.isArray(data.locations)) {
+    throw new Error("dit is geen kaartbestand");
+  }
+  if (data.format !== undefined && data.format !== MAP_FILE_FORMAT) {
+    throw new Error("onbekend bestandsformaat");
+  }
+
+  const locations = data.locations.filter((loc) => {
+    if (!loc || typeof loc.id !== "string" || !isNum(loc.x) || !isNum(loc.y)) return false;
+    if (loc.shape === "rect") return isNum(loc.width) && isNum(loc.height);
+    if (loc.shape === "circle") return isNum(loc.radiusX ?? loc.radius) && isNum(loc.radiusY ?? loc.radius);
+    if (loc.shape === "polygon") {
+      return Array.isArray(loc.points) && loc.points.length >= 3 &&
+        loc.points.every((p) => Array.isArray(p) && isNum(p[0]) && isNum(p[1]));
+    }
+    return false;
+  }).map((loc) => {
+    const name = typeof loc.name === "string" ? loc.name.slice(0, 60) : "";
+    return { ...loc, name: name.trim() === "" || containsProfanity(name) ? "Naamloze kamer" : name };
+  });
+  const roomIds = new Set(locations.map((l) => l.id));
+
+  const customTypes = (Array.isArray(data.customTypes) ? data.customTypes : [])
+    .filter((t) => t && typeof t.type === "string" && t.type.startsWith("custom_") &&
+      typeof t.label === "string" && t.label.trim() !== "" && !containsProfanity(t.label) &&
+      typeof t.color === "string" && /^#[0-9a-f]{6}$/i.test(t.color))
+    .map((t) => ({ type: t.type, label: t.label.slice(0, 30), color: t.color, category: "custom" }));
+  const knownTypes = new Set([...ITEM_TYPES.map((t) => t.type), ...customTypes.map((t) => t.type), ...loadCustomItemTypes().map((t) => t.type)]);
+
+  const connections = (Array.isArray(data.connections) ? data.connections : []).filter((c) =>
+    c && typeof c.id === "string" && roomIds.has(c.from) && roomIds.has(c.to) &&
+    Number.isInteger(c.fromEdge) && Number.isInteger(c.toEdge)
+  );
+
+  const items = (Array.isArray(data.items) ? data.items : []).filter((it) =>
+    it && typeof it.id === "string" && knownTypes.has(it.type) && roomIds.has(it.roomId) &&
+    isNum(it.x) && isNum(it.y)
+  );
+
+  return { locations, connections, items, customTypes };
+}
+
 function MapEditorPOC() {
   const [kamer, setKamer] = useState("");
   const [locations, setLocations] = useState(initialLocations);
@@ -502,6 +553,7 @@ function MapEditorPOC() {
   const svgRef = useRef(null);
   const nameInputRef = useRef(null);
   const nameBeforeEditRef = useRef(null); // { id, name } — naam bij het begin van het bewerken
+  const fileInputRef = useRef(null); // verborgen <input type="file"> voor "Kaart openen"
 
   const CLOSE_DISTANCE = 16; // klik binnen dit aantal px van het startpunt = vorm sluiten
   let nextRoomNumber = locations.length + 1;
@@ -796,6 +848,59 @@ function MapEditorPOC() {
     setConnections((prev) => prev.filter((conn) => conn.from !== selectedId && conn.to !== selectedId));
     setItems((prev) => prev.filter((it) => it.roomId !== selectedId));
     setSelectedId(null);
+  };
+
+  // Slaat de hele kaart op als .json-bestand (download). De eigen items die
+  // op de kaart gebruikt worden gaan mee, zodat de kaart ook in een andere
+  // browser (zonder die eigen items in localStorage) goed te openen is.
+  const saveMapToFile = () => {
+    const usedTypes = new Set(items.map((it) => it.type));
+    const data = {
+      format: MAP_FILE_FORMAT,
+      version: MAP_FILE_VERSION,
+      locations,
+      connections,
+      items,
+      customTypes: customTypes.filter((t) => usedTypes.has(t.type)),
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "kaart.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showHint("Kaart opgeslagen als kaart.json");
+  };
+
+  // Leest een eerder opgeslagen .json-bestand in en vervangt de huidige kaart.
+  const loadMapFromFile = async (file) => {
+    if (!file) return;
+    if (locations.length > 0 && !window.confirm("De huidige kaart wordt vervangen. Doorgaan?")) return;
+    let parsed;
+    try {
+      parsed = parseMapFile(JSON.parse(await file.text()));
+    } catch (err) {
+      showHint(`Kan ${file.name} niet openen: ${err.message}`);
+      return;
+    }
+    setLocations(parsed.locations);
+    setConnections(parsed.connections);
+    setItems(parsed.items);
+    setCustomTypes((prev) => {
+      const known = new Set(prev.map((t) => t.type));
+      const next = [...prev, ...parsed.customTypes.filter((t) => !known.has(t.type))];
+      saveCustomItemTypes(next);
+      return next;
+    });
+    setSelectedId(null);
+    setSelectedItemId(null);
+    setPendingEdge(null);
+    setDrawMode(false);
+    setDrawPoints([]);
+    showHint(`Kaart geladen uit ${file.name}`);
   };
 
   const deleteSelectedItem = () => {
@@ -1199,7 +1304,31 @@ function MapEditorPOC() {
             onClick: addCircleRoom,
             className: "editor-btn",
           }, "+ Cirkel")
-        : null
+        : null,
+      !drawMode
+        ? h("button", {
+            onClick: saveMapToFile,
+            className: "editor-btn",
+            title: "Download de kaart als .json-bestand",
+          }, "Kaart opslaan")
+        : null,
+      !drawMode
+        ? h("button", {
+            onClick: () => fileInputRef.current?.click(),
+            className: "editor-btn",
+            title: "Open een eerder opgeslagen .json-bestand",
+          }, "Kaart openen")
+        : null,
+      h("input", {
+        ref: fileInputRef,
+        type: "file",
+        accept: ".json,application/json",
+        style: { display: "none" },
+        onChange: (e) => {
+          loadMapFromFile(e.target.files?.[0]);
+          e.target.value = ""; // zodat hetzelfde bestand nog eens gekozen kan worden
+        },
+      })
     ),
     h("div", { className: "editor-status" },
       hint
