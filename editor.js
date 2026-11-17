@@ -57,17 +57,28 @@ function boundsOf(loc) {
 }
 
 // --- Kamernamen passend maken ---------------------------------------------
-// Het label moet binnen de vorm blijven. We zoeken daarom de grootste
-// lettergrootte waarbij de naam past, eventueel verdeeld over meerdere
-// regels. Past het zelfs op de kleinste grootte niet, dan wordt de naam
-// afgekort met "…" (de volledige naam staat dan in de tooltip).
+// Het label moet binnen de vorm blijven. Is de naam breder dan de kamer, dan
+// gaat hij eerst over meerdere regels (zoveel als er in de hoogte passen),
+// en te lange woorden worden afgebroken met een "-". Pas als de kamer vol
+// is, wordt de letter kleiner. Past het zelfs op de kleinste grootte niet,
+// dan wordt de naam afgekort met "…" (de volledige naam staat dan in de tooltip).
 const LABEL_FONT_FAMILY = "sans-serif";
 const LABEL_MAX_FONT = 9;
 const LABEL_MIN_FONT = 5;
 const LABEL_FONT_STEP = 0.5;
 const LABEL_LINE_HEIGHT = 1.2; // regelhoogte als factor van de lettergrootte
-const LABEL_MAX_LINES = 3;
+const LABEL_MAX_LINES = 12; // bovengrens, zodat het zoeken bij enorme kamers snel blijft
 const LABEL_PADDING = 3; // minimale ruimte tussen tekst en de rand van de vorm
+
+// Hoogte van de kamer, om te bepalen hoeveel regels er maximaal in passen.
+function heightOf(loc) {
+  if (loc.shape === "circle") return 2 * radiiOf(loc)[1];
+  if (loc.shape === "polygon") {
+    const ys = loc.points.map(([, py]) => py);
+    return Math.max(...ys) - Math.min(...ys);
+  }
+  return loc.height;
+}
 
 // Tekstbreedte meten via een (onzichtbaar) canvas. Breedte schaalt lineair
 // met de lettergrootte, dus we meten elke tekst één keer en rekenen om.
@@ -127,34 +138,44 @@ function lineFits(loc, cx, y, fontSize, text) {
 }
 
 // Verdeelt de woorden over precies `lineCount` regels (gecentreerd rond cy),
-// zoveel mogelijk woorden per regel. Geeft null terug als het niet past.
+// zoveel mogelijk woorden per regel. Past een woord in z'n eentje niet op de
+// regel, dan breken we het af op het langste stuk dat (met "-") wel past en
+// gaat de rest naar de volgende regel. Geeft null terug als het niet past.
 function wrapIntoLines(loc, cx, cy, fontSize, words, lineCount) {
   const lineHeight = LABEL_LINE_HEIGHT * fontSize;
   const firstY = cy - ((lineCount - 1) * lineHeight) / 2;
+  const queue = [...words];
   const lines = [];
-  let w = 0;
-  for (let i = 0; i < lineCount && w < words.length; i++) {
+  for (let i = 0; i < lineCount && queue.length > 0; i++) {
     const y = firstY + i * lineHeight;
-    let text = words[w];
-    if (!lineFits(loc, cx, y, fontSize, text)) return null;
-    w++;
-    while (w < words.length && lineFits(loc, cx, y, fontSize, `${text} ${words[w]}`)) {
-      text += ` ${words[w]}`;
-      w++;
+    let text = queue.shift();
+    if (!lineFits(loc, cx, y, fontSize, text)) {
+      let cut = text.length - 1;
+      while (cut > 0 && !lineFits(loc, cx, y, fontSize, `${text.slice(0, cut)}-`)) cut--;
+      if (cut === 0) return null; // zelfs één letter past niet op deze regel
+      queue.unshift(text.slice(cut));
+      text = `${text.slice(0, cut)}-`;
+    } else {
+      while (queue.length > 0 && lineFits(loc, cx, y, fontSize, `${text} ${queue[0]}`)) {
+        text += ` ${queue.shift()}`;
+      }
     }
     lines.push({ text, y });
   }
-  return w === words.length && lines.length === lineCount ? lines : null;
+  return queue.length === 0 && lines.length === lineCount ? lines : null;
 }
 
-// Bepaalt lettergrootte en regels voor het label van een kamer.
+// Bepaalt lettergrootte en regels voor het label van een kamer: zo groot
+// mogelijk, met zoveel regels als er in de hoogte van de kamer passen.
 function layoutLabel(loc, cx, cy) {
   const name = loc.name.trim();
   const words = name.split(/\s+/).filter(Boolean);
   if (words.length === 0) return { fontSize: LABEL_MAX_FONT, lines: [] };
 
+  const roomHeight = heightOf(loc) - 2 * LABEL_PADDING;
   for (let fontSize = LABEL_MAX_FONT; fontSize >= LABEL_MIN_FONT; fontSize -= LABEL_FONT_STEP) {
-    for (let lineCount = 1; lineCount <= Math.min(LABEL_MAX_LINES, words.length); lineCount++) {
+    const maxLines = Math.min(LABEL_MAX_LINES, Math.floor(roomHeight / (LABEL_LINE_HEIGHT * fontSize)));
+    for (let lineCount = 1; lineCount <= maxLines; lineCount++) {
       const lines = wrapIntoLines(loc, cx, cy, fontSize, words, lineCount);
       if (lines) return { fontSize, lines };
     }
@@ -352,8 +373,44 @@ const ITEM_TYPES = [
   { type: "barrel", label: "Ton", category: "object" },
   { type: "altar", label: "Altaar", category: "object" },
 ];
-const itemTypeOf = (type) => ITEM_TYPES.find((t) => t.type === type);
-const itemColorOf = (type) => ITEM_CATEGORIES[itemTypeOf(type)?.category]?.color ?? "#57534e";
+// Eigen items: de gebruiker maakt zelf een item met naam en kleur. Deze worden
+// lokaal in de browser bewaard (localStorage), zodat ze bij een volgend bezoek
+// weer in het paneel staan. Elk eigen item: { type: "custom_…", label, color, category: "custom" }.
+const CUSTOM_ITEMS_KEY = "mapEditor.customItems";
+const CUSTOM_DEFAULT_COLOR = "#0891b2";
+
+function loadCustomItemTypes() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CUSTOM_ITEMS_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((t) => t && typeof t.type === "string" && t.type.startsWith("custom_") && typeof t.label === "string")
+      .map((t) => ({
+        type: t.type,
+        label: t.label.slice(0, 30),
+        color: /^#[0-9a-f]{6}$/i.test(t.color) ? t.color : CUSTOM_DEFAULT_COLOR,
+        category: "custom",
+      }));
+  } catch {
+    return []; // geen toegang tot localStorage of kapotte data: gewoon leeg beginnen
+  }
+}
+
+function saveCustomItemTypes(types) {
+  try {
+    localStorage.setItem(CUSTOM_ITEMS_KEY, JSON.stringify(types));
+  } catch {
+    // opslaan lukt niet (bv. privévenster); de items blijven wel deze sessie bestaan
+  }
+}
+
+// Zoekt een itemtype op, zowel de vaste als de eigen items.
+const itemTypeOf = (type, customTypes = []) =>
+  ITEM_TYPES.find((t) => t.type === type) ?? customTypes.find((t) => t.type === type);
+const itemColorOf = (type, customTypes = []) => {
+  const t = itemTypeOf(type, customTypes);
+  return t?.color ?? ITEM_CATEGORIES[t?.category]?.color ?? "#57534e";
+};
 
 // Placeholder-plaatje in een 24x24 viewBox: gestippeld vlak met een kruis.
 function placeholderGlyph(color) {
@@ -366,11 +423,72 @@ function placeholderGlyph(color) {
   );
 }
 
+// --- Scheldwoordenfilter voor kamernamen -------------------------------------
+// Drie soorten woorden, om te voorkomen dat onschuldige woorden geblokkeerd
+// worden (zoals "hoera" of "catering"):
+//  - anywhere: geblokkeerd waar ze ook in een woord staan ("kankerkamer")
+//  - prefix:   geblokkeerd aan het begin van een woord ("kutkamer")
+//  - whole:    alleen als los woord, eventueel met een meervoud/verkleinwoord ("hoeren")
+// Voor het vergelijken gaat alles naar kleine letters zonder accenten,
+// worden cijfers/tekens als letters gelezen ("k4nk3r") en worden herhaalde
+// letters samengevoegd ("fuuuuck"), ook in de lijsten zelf.
+const collapseRepeats = (text) => text.replace(/(.)\1+/g, "$1");
+
+const PROFANITY = {
+  anywhere: [
+    "fuck", "kanker", "klootzak", "godverdomme", "godver", "tyfus", "motherf",
+    "asshole", "bitch", "nigger", "nigga", "kankerlijer", "teringlijer",
+  ],
+  prefix: ["klote", "tering", "kut", "slet", "tief"],
+  whole: [
+    "hoer", "lul", "pik", "flikker", "mongool", "neuk", "neuken", "shit", "cunt",
+    "dick", "ass", "bastard", "whore", "slut", "piss", "wanker", "twat", "fag", "faggot", "retard",
+  ],
+};
+const PROFANITY_LISTS = Object.fromEntries(
+  Object.entries(PROFANITY).map(([kind, words]) => [kind, words.map(collapseRepeats)])
+);
+const PROFANITY_SUFFIXES = ["", "s", "en", "e", "er", "ers", "je", "jes", "tje", "tjes", "y"];
+const LEET = { 0: "o", 1: "i", 3: "e", 4: "a", 5: "s", 7: "t", 8: "b", "@": "a", $: "s" };
+
+function containsProfanity(text) {
+  const words = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // accenten weg: "é" → "e"
+    .replace(/[0134578@$]/g, (c) => LEET[c])
+    .split(/[^a-z]+/)
+    .filter(Boolean);
+
+  // Losse letters achter elkaar samenvoegen, zodat "f u c k" ook gevonden wordt.
+  const tokens = [];
+  let letters = "";
+  for (const word of words) {
+    if (word.length === 1) {
+      letters += word;
+      continue;
+    }
+    if (letters) tokens.push(letters);
+    letters = "";
+    tokens.push(word);
+  }
+  if (letters) tokens.push(letters);
+
+  return tokens.map(collapseRepeats).some((word) =>
+    PROFANITY_LISTS.anywhere.some((bad) => word.includes(bad))
+    || PROFANITY_LISTS.prefix.some((bad) => word.startsWith(bad))
+    || PROFANITY_LISTS.whole.some((bad) => word.startsWith(bad) && PROFANITY_SUFFIXES.includes(word.slice(bad.length)))
+  );
+}
+
 function MapEditorPOC() {
   const [kamer, setKamer] = useState("");
   const [locations, setLocations] = useState(initialLocations);
   const [connections, setConnections] = useState(initialConnections);
   const [items, setItems] = useState([]); // { id, type, roomId, x, y } — x/y is het midden, absoluut
+  const [customTypes, setCustomTypes] = useState(loadCustomItemTypes);
+  const [customName, setCustomName] = useState("");
+  const [customColor, setCustomColor] = useState(CUSTOM_DEFAULT_COLOR);
   const [selectedId, setSelectedId] = useState(null);
   const [selectedItemId, setSelectedItemId] = useState(null);
   const [draggingItem, setDraggingItem] = useState(null); // { id, offsetX, offsetY, startX, startY }
@@ -383,6 +501,7 @@ function MapEditorPOC() {
   const [pendingEdge, setPendingEdge] = useState(null); // { locId, edgeIndex } — eerste wand die je hebt aangeklikt
   const svgRef = useRef(null);
   const nameInputRef = useRef(null);
+  const nameBeforeEditRef = useRef(null); // { id, name } — naam bij het begin van het bewerken
 
   const CLOSE_DISTANCE = 16; // klik binnen dit aantal px van het startpunt = vorm sluiten
   let nextRoomNumber = locations.length + 1;
@@ -501,7 +620,7 @@ function MapEditorPOC() {
   const handleDrop = (e) => {
     const type = e.dataTransfer.getData(ITEM_DRAG_TYPE);
     setDropTargetId(null);
-    if (!itemTypeOf(type)) return;
+    if (!itemTypeOf(type, customTypes)) return;
     e.preventDefault();
     const { x, y } = toSvgPoint(e.clientX, e.clientY);
     const room = roomAt(locations, x, y);
@@ -514,6 +633,45 @@ function MapEditorPOC() {
     setSelectedItemId(newItem.id);
     setSelectedId(null);
   };
+  // Een eigen item aanmaken en meteen lokaal opslaan.
+  const customNameTrimmed = customName.trim();
+  const customNameIsBlocked = containsProfanity(customNameTrimmed);
+  const addCustomType = () => {
+    if (!customNameTrimmed) {
+      showHint("Geef je eigen item eerst een naam");
+      return;
+    }
+    if (customNameIsBlocked) {
+      showHint("Deze naam bevat een ongepast woord");
+      return;
+    }
+    const newType = { type: `custom_${Date.now()}`, label: customNameTrimmed, color: customColor, category: "custom" };
+    setCustomTypes((prev) => {
+      const next = [...prev, newType];
+      saveCustomItemTypes(next);
+      return next;
+    });
+    setCustomName("");
+    showHint(`"${newType.label}" opgeslagen · sleep het naar een kamer`);
+  };
+
+  // Een eigen item uit het paneel (en dus uit de opslag) verwijderen. Staat
+  // hij al op de kaart, dan vragen we eerst of die ook weg mogen.
+  const deleteCustomType = (type) => {
+    const def = customTypes.find((t) => t.type === type);
+    const placed = items.filter((it) => it.type === type).length;
+    if (placed > 0 && !window.confirm(`"${def?.label}" staat ${placed}x op de kaart. Die worden ook verwijderd. Doorgaan?`)) return;
+    setCustomTypes((prev) => {
+      const next = prev.filter((t) => t.type !== type);
+      saveCustomItemTypes(next);
+      return next;
+    });
+    if (placed > 0) {
+      setItems((prev) => prev.filter((it) => it.type !== type));
+      if (items.some((it) => it.id === selectedItemId && it.type === type)) setSelectedItemId(null);
+    }
+  };
+
   const selected = locations.find((l) => l.id === selectedId);
   const selectedItem = items.find((it) => it.id === selectedItemId);
 
@@ -658,8 +816,10 @@ function MapEditorPOC() {
   // Hernoemt de geselecteerde kamer. Tijdens het typen mag de naam even leeg
   // zijn; pas bij het verlaten van het veld (of als je een andere kamer
   // selecteert) vullen we lege namen aan, zodat er geen kamer zonder label op
-  // de kaart blijft staan. Dit gebeurt voor álle kamers, omdat het veld bij
-  // het wisselen van selectie al bij de nieuwe kamer hoort.
+  // de kaart blijft staan. Een naam met een scheldwoord wordt dan ook
+  // geblokkeerd: de kamer krijgt de naam van vóór het bewerken terug. Dit
+  // gebeurt voor álle kamers, omdat het veld bij het wisselen van selectie
+  // al bij de nieuwe kamer hoort.
   const renameSelectedRoom = (name) => {
     setLocations((prev) =>
       prev.map((loc) => (loc.id === selectedId ? { ...loc, name } : loc))
@@ -667,12 +827,25 @@ function MapEditorPOC() {
   };
 
   const finishRenaming = () => {
+    const before = nameBeforeEditRef.current;
+    nameBeforeEditRef.current = null;
+    const fixedName = (loc) => {
+      if (loc.name.trim() === "") return "Naamloze kamer";
+      if (!containsProfanity(loc.name)) return loc.name;
+      const canRestore = before?.id === loc.id && before.name.trim() !== "" && !containsProfanity(before.name);
+      return canRestore ? before.name : "Naamloze kamer";
+    };
+    if (locations.some((loc) => containsProfanity(loc.name))) {
+      showHint("Ongepaste kamernaam geblokkeerd, de vorige naam is teruggezet");
+    }
     setLocations((prev) =>
-      prev.some((loc) => loc.name.trim() === "")
-        ? prev.map((loc) => (loc.name.trim() === "" ? { ...loc, name: "Naamloze kamer" } : loc))
+      prev.some((loc) => fixedName(loc) !== loc.name)
+        ? prev.map((loc) => ({ ...loc, name: fixedName(loc) }))
         : prev
     );
   };
+
+  const nameIsBlocked = selected != null && containsProfanity(selected.name);
 
   useEffect(finishRenaming, [selectedId]);
 
@@ -837,7 +1010,7 @@ function MapEditorPOC() {
   // Items op de kaart: het placeholder-plaatje (een geneste <svg> zodat we
   // dezelfde 24x24 glyph als in het paneel kunnen gebruiken) met de naam eronder.
   const itemEls = items.map((item) => {
-    const label = itemTypeOf(item.type)?.label ?? item.type;
+    const label = itemTypeOf(item.type, customTypes)?.label ?? item.type;
     const half = ITEM_SIZE / 2;
     const classes = `map-item${item.id === selectedItemId ? " is-selected" : ""}${draggingItem?.id === item.id ? " is-dragging" : ""}`;
     return h("g", {
@@ -848,33 +1021,84 @@ function MapEditorPOC() {
       h("title", null, label),
       h("rect", { className: "map-item-outline", x: item.x - half - 2, y: item.y - half - 2, width: ITEM_SIZE + 4, height: ITEM_SIZE + 4, rx: 3 }),
       h("svg", { x: item.x - half, y: item.y - half, width: ITEM_SIZE, height: ITEM_SIZE, viewBox: "0 0 24 24" },
-        placeholderGlyph(itemColorOf(item.type))
+        placeholderGlyph(itemColorOf(item.type, customTypes))
       ),
       h("text", { className: "map-item-label", x: item.x, y: item.y + half + 5, textAnchor: "middle" }, label)
     );
   });
 
+  // Eén sleepbaar item in het paneel. Eigen items krijgen een ×-knopje.
+  const paletteItemEl = (t, onDelete) =>
+    h("div", {
+      key: t.type,
+      className: "editor-palette-item",
+      draggable: true,
+      title: `Sleep ${t.label} naar een kamer`,
+      onDragStart: (e) => {
+        e.dataTransfer.setData(ITEM_DRAG_TYPE, t.type);
+        e.dataTransfer.effectAllowed = "copy";
+      },
+    },
+      h("svg", { viewBox: "0 0 24 24", width: 32, height: 32 }, placeholderGlyph(itemColorOf(t.type, customTypes))),
+      h("span", null, t.label),
+      onDelete
+        ? h("button", {
+            type: "button",
+            className: "editor-palette-item-delete",
+            title: `${t.label} verwijderen`,
+            draggable: false,
+            onClick: (e) => {
+              e.stopPropagation();
+              onDelete();
+            },
+          }, "×")
+        : null
+    );
+
+  // Formulier om een eigen item te maken, met de opgeslagen eigen items eronder.
+  const customGroupEl = h("div", { key: "custom", className: "editor-palette-group" },
+    h("div", { className: "editor-palette-heading" }, "Eigen items"),
+    h("form", {
+      className: "editor-custom-form",
+      onSubmit: (e) => {
+        e.preventDefault();
+        addCustomType();
+      },
+    },
+      h("input", {
+        type: "text",
+        className: `editor-name-input editor-custom-name${customNameIsBlocked ? " is-invalid" : ""}`,
+        placeholder: "Naam, bv. Standbeeld",
+        value: customName,
+        maxLength: 30,
+        onChange: (e) => setCustomName(e.target.value),
+      }),
+      h("div", { className: "editor-custom-row" },
+        h("input", {
+          type: "color",
+          className: "editor-custom-color",
+          title: "Kies een kleur",
+          value: customColor,
+          onChange: (e) => setCustomColor(e.target.value),
+        }),
+        h("button", { type: "submit", className: "editor-btn", disabled: !customNameTrimmed || customNameIsBlocked }, "+ Maak item")
+      )
+    ),
+    customTypes.length > 0
+      ? h("div", { className: "editor-palette-items" },
+          ...customTypes.map((t) => paletteItemEl(t, () => deleteCustomType(t.type)))
+        )
+      : h("div", { className: "editor-palette-empty" }, "Nog geen eigen items. Ze worden in deze browser bewaard.")
+  );
+
   // Het paneel met items om de kaart op te slepen, gegroepeerd per categorie.
   const paletteEl = h("div", { className: "editor-palette" },
+    customGroupEl,
     ...Object.entries(ITEM_CATEGORIES).map(([category, { label }]) =>
       h("div", { key: category, className: "editor-palette-group" },
         h("div", { className: "editor-palette-heading" }, label),
         h("div", { className: "editor-palette-items" },
-          ...ITEM_TYPES.filter((t) => t.category === category).map((t) =>
-            h("div", {
-              key: t.type,
-              className: "editor-palette-item",
-              draggable: true,
-              title: `Sleep ${t.label} naar een kamer`,
-              onDragStart: (e) => {
-                e.dataTransfer.setData(ITEM_DRAG_TYPE, t.type);
-                e.dataTransfer.effectAllowed = "copy";
-              },
-            },
-              h("svg", { viewBox: "0 0 24 24", width: 32, height: 32 }, placeholderGlyph(itemColorOf(t.type))),
-              h("span", null, t.label)
-            )
-          )
+          ...ITEM_TYPES.filter((t) => t.category === category).map((t) => paletteItemEl(t))
         )
       )
     )
@@ -929,9 +1153,12 @@ function MapEditorPOC() {
             h("input", {
               ref: nameInputRef,
               type: "text",
-              className: "editor-name-input",
+              className: `editor-name-input${nameIsBlocked ? " is-invalid" : ""}`,
               value: selected.name,
               maxLength: 60,
+              onFocus: () => {
+                nameBeforeEditRef.current = { id: selected.id, name: selected.name };
+              },
               onChange: (e) => renameSelectedRoom(e.target.value),
               onBlur: finishRenaming,
               onKeyDown: (e) => {
@@ -977,12 +1204,14 @@ function MapEditorPOC() {
     h("div", { className: "editor-status" },
       hint
         ? hint
+        : nameIsBlocked && !drawMode
+        ? "Deze naam bevat een ongepast woord en wordt niet opgeslagen"
         : drawMode
         ? `Tekenen: klik om punten neer te zetten (${drawPoints.length} geplaatst) · klik bij het startpunt om te sluiten (min. 3 punten)`
         : pendingEdge
           ? "Klik nu op een wand van een andere kamer om te verbinden · Escape om te annuleren"
           : selectedItem
-            ? `Item: ${itemTypeOf(selectedItem.type)?.label} in ${locations.find((l) => l.id === selectedItem.roomId)?.name ?? "?"} · sleep om te verplaatsen (ook naar een andere kamer) · Delete/Backspace om te verwijderen`
+            ? `Item: ${itemTypeOf(selectedItem.type, customTypes)?.label} in ${locations.find((l) => l.id === selectedItem.roomId)?.name ?? "?"} · sleep om te verplaatsen (ook naar een andere kamer) · Delete/Backspace om te verwijderen`
           : selected
             ? `Geselecteerd: ${selected.name} — x:${selected.x} y:${selected.y} · dubbelklik om te hernoemen · sleep een hendel om te vergroten/verkleinen (Shift = verhouding behouden) · pijltjestoetsen om te verplaatsen · Delete/Backspace om te verwijderen`
             : "Klik op een lege plek om te deselecteren · sleep een kamer om hem te verplaatsen · sleep items uit het paneel links een kamer in"
