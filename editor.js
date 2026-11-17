@@ -346,7 +346,7 @@ function roomAt(locations, x, y) {
 // Voorlopig krijgt elk item hetzelfde placeholder-plaatje (in de kleur van
 // zijn categorie) met de naam eronder. Later kunnen hier echte iconen komen.
 const ITEM_DRAG_TYPE = "application/x-map-item";
-const ITEM_SIZE = 18; // breedte/hoogte van een item op de kaart
+const ITEM_SIZE = 18; // breedte/hoogte van een item op de map
 const ITEM_SNAP = GRID / 2;
 const snapItem = (v) => Math.round(v / ITEM_SNAP) * ITEM_SNAP;
 
@@ -481,17 +481,17 @@ function containsProfanity(text) {
   );
 }
 
-// --- Kaart opslaan/openen als .json -----------------------------------------
+// --- map opslaan/openen als .json -----------------------------------------
 const MAP_FILE_FORMAT = "map-editor";
 const MAP_FILE_VERSION = 1;
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 
-// Controleert een ingelezen kaartbestand en gooit alles weg wat niet klopt,
+// Controleert een ingelezen mapbestand en gooit alles weg wat niet klopt,
 // zodat een kapot of aangepast bestand de editor niet kan laten crashen.
 function parseMapFile(data) {
   if (!data || typeof data !== "object" || !Array.isArray(data.locations)) {
-    throw new Error("dit is geen kaartbestand");
+    throw new Error("dit is geen mapbestand");
   }
   if (data.format !== undefined && data.format !== MAP_FILE_FORMAT) {
     throw new Error("onbekend bestandsformaat");
@@ -553,7 +553,7 @@ function MapEditorPOC() {
   const svgRef = useRef(null);
   const nameInputRef = useRef(null);
   const nameBeforeEditRef = useRef(null); // { id, name } — naam bij het begin van het bewerken
-  const fileInputRef = useRef(null); // verborgen <input type="file"> voor "Kaart openen"
+  const fileInputRef = useRef(null); // verborgen <input type="file"> voor "map openen"
 
   const CLOSE_DISTANCE = 16; // klik binnen dit aantal px van het startpunt = vorm sluiten
   let nextRoomNumber = locations.length + 1;
@@ -708,11 +708,11 @@ function MapEditorPOC() {
   };
 
   // Een eigen item uit het paneel (en dus uit de opslag) verwijderen. Staat
-  // hij al op de kaart, dan vragen we eerst of die ook weg mogen.
+  // hij al op de map, dan vragen we eerst of die ook weg mogen.
   const deleteCustomType = (type) => {
     const def = customTypes.find((t) => t.type === type);
     const placed = items.filter((it) => it.type === type).length;
-    if (placed > 0 && !window.confirm(`"${def?.label}" staat ${placed}x op de kaart. Die worden ook verwijderd. Doorgaan?`)) return;
+    if (placed > 0 && !window.confirm(`"${def?.label}" staat ${placed}x op de map. Die worden ook verwijderd. Doorgaan?`)) return;
     setCustomTypes((prev) => {
       const next = prev.filter((t) => t.type !== type);
       saveCustomItemTypes(next);
@@ -850,8 +850,8 @@ function MapEditorPOC() {
     setSelectedId(null);
   };
 
-  // Slaat de hele kaart op als .json-bestand (download). De eigen items die
-  // op de kaart gebruikt worden gaan mee, zodat de kaart ook in een andere
+  // Slaat de hele map op als .json-bestand (download). De eigen items die
+  // op de map gebruikt worden gaan mee, zodat de map ook in een andere
   // browser (zonder die eigen items in localStorage) goed te openen is.
   const saveMapToFile = () => {
     const usedTypes = new Set(items.map((it) => it.type));
@@ -867,18 +867,18 @@ function MapEditorPOC() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "kaart.json";
+    a.download = "map.json";
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    showHint("Kaart opgeslagen als kaart.json");
+    showHint("Map opgeslagen als map.json");
   };
 
-  // Leest een eerder opgeslagen .json-bestand in en vervangt de huidige kaart.
+  // Leest een eerder opgeslagen .json-bestand in en vervangt de huidige map.
   const loadMapFromFile = async (file) => {
     if (!file) return;
-    if (locations.length > 0 && !window.confirm("De huidige kaart wordt vervangen. Doorgaan?")) return;
+    if (locations.length > 0 && !window.confirm("De huidige map wordt vervangen. Doorgaan?")) return;
     let parsed;
     try {
       parsed = parseMapFile(JSON.parse(await file.text()));
@@ -900,7 +900,7 @@ function MapEditorPOC() {
     setPendingEdge(null);
     setDrawMode(false);
     setDrawPoints([]);
-    showHint(`Kaart geladen uit ${file.name}`);
+    showHint(`map geladen uit ${file.name}`);
   };
 
   const deleteSelectedItem = () => {
@@ -921,7 +921,7 @@ function MapEditorPOC() {
   // Hernoemt de geselecteerde kamer. Tijdens het typen mag de naam even leeg
   // zijn; pas bij het verlaten van het veld (of als je een andere kamer
   // selecteert) vullen we lege namen aan, zodat er geen kamer zonder label op
-  // de kaart blijft staan. Een naam met een scheldwoord wordt dan ook
+  // de map blijft staan. Een naam met een scheldwoord wordt dan ook
   // geblokkeerd: de kamer krijgt de naam van vóór het bewerken terug. Dit
   // gebeurt voor álle kamers, omdat het veld bij het wisselen van selectie
   // al bij de nieuwe kamer hoort.
@@ -1112,7 +1112,7 @@ function MapEditorPOC() {
     }, h("title", null, loc.name), shapeEl, label);
   });
 
-  // Items op de kaart: het placeholder-plaatje (een geneste <svg> zodat we
+  // Items op de map: het placeholder-plaatje (een geneste <svg> zodat we
   // dezelfde 24x24 glyph als in het paneel kunnen gebruiken) met de naam eronder.
   const itemEls = items.map((item) => {
     const label = itemTypeOf(item.type, customTypes)?.label ?? item.type;
@@ -1196,7 +1196,7 @@ function MapEditorPOC() {
       : h("div", { className: "editor-palette-empty" }, "Nog geen eigen items. Ze worden in deze browser bewaard.")
   );
 
-  // Het paneel met items om de kaart op te slepen, gegroepeerd per categorie.
+  // Het paneel met items om de map op te slepen, gegroepeerd per categorie.
   const paletteEl = h("div", { className: "editor-palette" },
     customGroupEl,
     ...Object.entries(ITEM_CATEGORIES).map(([category, { label }]) =>
@@ -1309,15 +1309,15 @@ function MapEditorPOC() {
         ? h("button", {
             onClick: saveMapToFile,
             className: "editor-btn",
-            title: "Download de kaart als .json-bestand",
-          }, "Kaart opslaan")
+            title: "Download de map als .json-bestand",
+          }, "map opslaan")
         : null,
       !drawMode
         ? h("button", {
             onClick: () => fileInputRef.current?.click(),
             className: "editor-btn",
             title: "Open een eerder opgeslagen .json-bestand",
-          }, "Kaart openen")
+          }, "map openen")
         : null,
       h("input", {
         ref: fileInputRef,
