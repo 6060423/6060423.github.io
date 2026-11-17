@@ -74,7 +74,7 @@ const LABEL_PADDING = 3; // minimale ruimte tussen tekst en de rand van de vorm
 function heightOf(loc) {
   if (loc.shape === "circle") return 2 * radiiOf(loc)[1];
   if (loc.shape === "polygon") {
-    const ys = loc.points.Map(([, py]) => py);
+    const ys = loc.points.map(([, py]) => py);
     return Math.max(...ys) - Math.min(...ys);
   }
   return loc.height;
@@ -83,7 +83,7 @@ function heightOf(loc) {
 // Tekstbreedte meten via een (onzichtbaar) canvas. Breedte schaalt lineair
 // met de lettergrootte, dus we meten elke tekst één keer en rekenen om.
 let measureCtx = null;
-const textWidthCache = new Map();
+const textWidthCache = new map();
 function textWidth(text, fontSize) {
   if (!textWidthCache.has(text)) {
     if (textWidthCache.size > 1000) textWidthCache.clear();
@@ -108,7 +108,7 @@ function halfWidthAt(loc, cx, y) {
 
   const pts = loc.shape === "rect"
     ? [[loc.x, loc.y], [loc.x + loc.width, loc.y], [loc.x + loc.width, loc.y + loc.height], [loc.x, loc.y + loc.height]]
-    : loc.points.Map(([px, py]) => [loc.x + px, loc.y + py]);
+    : loc.points.map(([px, py]) => [loc.x + px, loc.y + py]);
 
   // Snijpunten van de horizontale lijn op hoogte y met alle randen; tussen
   // elk paar opeenvolgende snijpunten zit je binnen de vorm.
@@ -204,14 +204,14 @@ function edgesOf(loc) {
       [loc.x + loc.width, loc.y + loc.height],
       [loc.x, loc.y + loc.height],
     ];
-    return corners.Map((p1, i) => {
+    return corners.map((p1, i) => {
       const p2 = corners[(i + 1) % corners.length];
       return { mid: [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2] };
     });
   }
   if (loc.shape === "polygon") {
-    const abs = loc.points.Map(([px, py]) => [loc.x + px, loc.y + py]);
-    return abs.Map((p1, i) => {
+    const abs = loc.points.map(([px, py]) => [loc.x + px, loc.y + py]);
+    return abs.map((p1, i) => {
       const p2 = abs[(i + 1) % abs.length];
       return { mid: [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2] };
     });
@@ -252,7 +252,7 @@ function resizeHandlesOf(loc) {
     ];
   }
   if (loc.shape === "polygon") {
-    return loc.points.Map(([px, py], i) => ({ id: i, pos: [loc.x + px, loc.y + py] }));
+    return loc.points.map(([px, py], i) => ({ id: i, pos: [loc.x + px, loc.y + py] }));
   }
   return [];
 }
@@ -294,16 +294,16 @@ function resizeLocation(start, handle, x, y, keepRatio) {
   if (start.shape === "polygon") {
     // Eén hoekpunt verplaatsen, en daarna de punten opnieuw relatief maken
     // t.o.v. de linkerbovenhoek van de bounding box (net als finishDrawing).
-    const abs = start.points.Map(([px, py], i) =>
+    const abs = start.points.map(([px, py], i) =>
       i === handle ? [snap(x), snap(y)] : [start.x + px, start.y + py]
     );
-    const originX = Math.min(...abs.Map((p) => p[0]));
-    const originY = Math.min(...abs.Map((p) => p[1]));
+    const originX = Math.min(...abs.map((p) => p[0]));
+    const originY = Math.min(...abs.map((p) => p[1]));
     return {
       ...start,
       x: originX,
       y: originY,
-      points: abs.Map(([px, py]) => [px - originX, py - originY]),
+      points: abs.map(([px, py]) => [px - originX, py - originY]),
     };
   }
   return start;
@@ -323,7 +323,7 @@ function containsPoint(loc, x, y) {
     return dx * dx + dy * dy <= 1;
   }
   if (loc.shape === "polygon") {
-    const pts = loc.points.Map(([px, py]) => [loc.x + px, loc.y + py]);
+    const pts = loc.points.map(([px, py]) => [loc.x + px, loc.y + py]);
     let inside = false;
     for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
       const [xi, yi] = pts[i];
@@ -345,8 +345,8 @@ function roomAt(locations, x, y) {
 // --- Items in kamers ---------------------------------------------------------
 // Voorlopig krijgt elk item hetzelfde placeholder-plaatje (in de kleur van
 // zijn categorie) met de naam eronder. Later kunnen hier echte iconen komen.
-const ITEM_DRAG_TYPE = "application/x-Map-item";
-const ITEM_SIZE = 18; // breedte/hoogte van een item op de Map
+const ITEM_DRAG_TYPE = "application/x-map-item";
+const ITEM_SIZE = 18; // breedte/hoogte van een item op de map
 const ITEM_SNAP = GRID / 2;
 const snapItem = (v) => Math.round(v / ITEM_SNAP) * ITEM_SNAP;
 
@@ -376,7 +376,7 @@ const ITEM_TYPES = [
 // Eigen items: de gebruiker maakt zelf een item met naam en kleur. Deze worden
 // lokaal in de browser bewaard (localStorage), zodat ze bij een volgend bezoek
 // weer in het paneel staan. Elk eigen item: { type: "custom_…", label, color, category: "custom" }.
-const CUSTOM_ITEMS_KEY = "MapEditor.customItems";
+const CUSTOM_ITEMS_KEY = "mapEditor.customItems";
 const CUSTOM_DEFAULT_COLOR = "#0891b2";
 
 function loadCustomItemTypes() {
@@ -385,7 +385,7 @@ function loadCustomItemTypes() {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter((t) => t && typeof t.type === "string" && t.type.startsWith("custom_") && typeof t.label === "string")
-      .Map((t) => ({
+      .map((t) => ({
         type: t.type,
         label: t.label.slice(0, 30),
         color: /^#[0-9a-f]{6}$/i.test(t.color) ? t.color : CUSTOM_DEFAULT_COLOR,
@@ -446,7 +446,7 @@ const PROFANITY = {
   ],
 };
 const PROFANITY_LISTS = Object.fromEntries(
-  Object.entries(PROFANITY).Map(([kind, words]) => [kind, words.Map(collapseRepeats)])
+  Object.entries(PROFANITY).map(([kind, words]) => [kind, words.map(collapseRepeats)])
 );
 const PROFANITY_SUFFIXES = ["", "s", "en", "e", "er", "ers", "je", "jes", "tje", "tjes", "y"];
 const LEET = { 0: "o", 1: "i", 3: "e", 4: "a", 5: "s", 7: "t", 8: "b", "@": "a", $: "s" };
@@ -474,26 +474,26 @@ function containsProfanity(text) {
   }
   if (letters) tokens.push(letters);
 
-  return tokens.Map(collapseRepeats).some((word) =>
+  return tokens.map(collapseRepeats).some((word) =>
     PROFANITY_LISTS.anywhere.some((bad) => word.includes(bad))
     || PROFANITY_LISTS.prefix.some((bad) => word.startsWith(bad))
     || PROFANITY_LISTS.whole.some((bad) => word.startsWith(bad) && PROFANITY_SUFFIXES.includes(word.slice(bad.length)))
   );
 }
 
-// --- Map opslaan/openen als .json -----------------------------------------
-const Map_FILE_FORMAT = "Map-editor";
-const Map_FILE_VERSION = 1;
+// --- map opslaan/openen als .json -----------------------------------------
+const map_FILE_FORMAT = "map-editor";
+const map_FILE_VERSION = 1;
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 
-// Controleert een ingelezen Mapbestand en gooit alles weg wat niet klopt,
+// Controleert een ingelezen mapbestand en gooit alles weg wat niet klopt,
 // zodat een kapot of aangepast bestand de editor niet kan laten crashen.
-function parseMapFile(data) {
+function parsemapFile(data) {
   if (!data || typeof data !== "object" || !Array.isArray(data.locations)) {
-    throw new Error("dit is geen Mapbestand");
+    throw new Error("dit is geen mapbestand");
   }
-  if (data.format !== undefined && data.format !== Map_FILE_FORMAT) {
+  if (data.format !== undefined && data.format !== map_FILE_FORMAT) {
     throw new Error("onbekend bestandsformaat");
   }
 
@@ -506,18 +506,18 @@ function parseMapFile(data) {
         loc.points.every((p) => Array.isArray(p) && isNum(p[0]) && isNum(p[1]));
     }
     return false;
-  }).Map((loc) => {
+  }).map((loc) => {
     const name = typeof loc.name === "string" ? loc.name.slice(0, 60) : "";
     return { ...loc, name: name.trim() === "" || containsProfanity(name) ? "Naamloze kamer" : name };
   });
-  const roomIds = new Set(locations.Map((l) => l.id));
+  const roomIds = new Set(locations.map((l) => l.id));
 
   const customTypes = (Array.isArray(data.customTypes) ? data.customTypes : [])
     .filter((t) => t && typeof t.type === "string" && t.type.startsWith("custom_") &&
       typeof t.label === "string" && t.label.trim() !== "" && !containsProfanity(t.label) &&
       typeof t.color === "string" && /^#[0-9a-f]{6}$/i.test(t.color))
-    .Map((t) => ({ type: t.type, label: t.label.slice(0, 30), color: t.color, category: "custom" }));
-  const knownTypes = new Set([...ITEM_TYPES.Map((t) => t.type), ...customTypes.Map((t) => t.type), ...loadCustomItemTypes().Map((t) => t.type)]);
+    .map((t) => ({ type: t.type, label: t.label.slice(0, 30), color: t.color, category: "custom" }));
+  const knownTypes = new Set([...ITEM_TYPES.map((t) => t.type), ...customTypes.map((t) => t.type), ...loadCustomItemTypes().map((t) => t.type)]);
 
   const connections = (Array.isArray(data.connections) ? data.connections : []).filter((c) =>
     c && typeof c.id === "string" && roomIds.has(c.from) && roomIds.has(c.to) &&
@@ -532,7 +532,7 @@ function parseMapFile(data) {
   return { locations, connections, items, customTypes };
 }
 
-function MapEditorPOC() {
+function mapEditorPOC() {
   const [kamer, setKamer] = useState("");
   const [locations, setLocations] = useState(initialLocations);
   const [connections, setConnections] = useState(initialConnections);
@@ -553,7 +553,7 @@ function MapEditorPOC() {
   const svgRef = useRef(null);
   const nameInputRef = useRef(null);
   const nameBeforeEditRef = useRef(null); // { id, name } — naam bij het begin van het bewerken
-  const fileInputRef = useRef(null); // verborgen <input type="file"> voor "Map openen"
+  const fileInputRef = useRef(null); // verborgen <input type="file"> voor "map openen"
 
   const CLOSE_DISTANCE = 16; // klik binnen dit aantal px van het startpunt = vorm sluiten
   let nextRoomNumber = locations.length + 1;
@@ -575,7 +575,7 @@ function MapEditorPOC() {
     setSelectedItemId(null);
     const { x, y } = toSvgPoint(e.clientX, e.clientY);
     const itemStarts = Object.fromEntries(
-      items.filter((it) => it.roomId === loc.id).Map((it) => [it.id, [it.x, it.y]])
+      items.filter((it) => it.roomId === loc.id).map((it) => [it.id, [it.x, it.y]])
     );
     setDragging({ id: loc.id, offsetX: x - loc.x, offsetY: y - loc.y, roomX: loc.x, roomY: loc.y, itemStarts });
   };
@@ -604,14 +604,14 @@ function MapEditorPOC() {
     if (resizing) {
       const { x, y } = toSvgPoint(e.clientX, e.clientY);
       const resized = resizeLocation(resizing.start, resizing.handle, x, y, e.shiftKey);
-      setLocations((prev) => prev.Map((loc) => (loc.id === resizing.id ? resized : loc)));
+      setLocations((prev) => prev.map((loc) => (loc.id === resizing.id ? resized : loc)));
       return;
     }
     if (draggingItem) {
       const { x, y } = toSvgPoint(e.clientX, e.clientY);
       const itemX = snapItem(x - draggingItem.offsetX);
       const itemY = snapItem(y - draggingItem.offsetY);
-      setItems((prev) => prev.Map((it) => (it.id === draggingItem.id ? { ...it, x: itemX, y: itemY } : it)));
+      setItems((prev) => prev.map((it) => (it.id === draggingItem.id ? { ...it, x: itemX, y: itemY } : it)));
       setDropTargetId(roomAt(locations, itemX, itemY)?.id ?? null);
       return;
     }
@@ -622,10 +622,10 @@ function MapEditorPOC() {
     const dx = newX - dragging.roomX;
     const dy = newY - dragging.roomY;
     setLocations((prev) =>
-      prev.Map((loc) => (loc.id === dragging.id ? { ...loc, x: newX, y: newY } : loc))
+      prev.map((loc) => (loc.id === dragging.id ? { ...loc, x: newX, y: newY } : loc))
     );
     setItems((prev) =>
-      prev.Map((it) => {
+      prev.map((it) => {
         const start = dragging.itemStarts[it.id];
         return start ? { ...it, x: start[0] + dx, y: start[1] + dy } : it;
       })
@@ -638,7 +638,7 @@ function MapEditorPOC() {
     const item = items.find((it) => it.id === draggingItem.id);
     const room = item && roomAt(locations, item.x, item.y);
     setItems((prev) =>
-      prev.Map((it) => {
+      prev.map((it) => {
         if (it.id !== draggingItem.id) return it;
         return room ? { ...it, roomId: room.id } : { ...it, x: draggingItem.startX, y: draggingItem.startY };
       })
@@ -708,11 +708,11 @@ function MapEditorPOC() {
   };
 
   // Een eigen item uit het paneel (en dus uit de opslag) verwijderen. Staat
-  // hij al op de Map, dan vragen we eerst of die ook weg mogen.
+  // hij al op de map, dan vragen we eerst of die ook weg mogen.
   const deleteCustomType = (type) => {
     const def = customTypes.find((t) => t.type === type);
     const placed = items.filter((it) => it.type === type).length;
-    if (placed > 0 && !window.confirm(`"${def?.label}" staat ${placed}x op de Map. Die worden ook verwijderd. Doorgaan?`)) return;
+    if (placed > 0 && !window.confirm(`"${def?.label}" staat ${placed}x op de map. Die worden ook verwijderd. Doorgaan?`)) return;
     setCustomTypes((prev) => {
       const next = prev.filter((t) => t.type !== type);
       saveCustomItemTypes(next);
@@ -733,11 +733,11 @@ function MapEditorPOC() {
   const drawPreviewLine = drawPoints.length >= 2
     ? h("polyline", {
         className: "draw-preview-line",
-        points: drawPoints.Map(([px, py]) => `${px},${py}`).join(" "),
+        points: drawPoints.map(([px, py]) => `${px},${py}`).join(" "),
       })
     : null;
 
-  const drawPreviewDots = drawPoints.Map(([px, py], i) =>
+  const drawPreviewDots = drawPoints.map(([px, py], i) =>
     h("circle", {
       key: `drawpoint_${i}`,
       className: `draw-dot${i === 0 ? " is-first" : ""}`,
@@ -777,11 +777,11 @@ function MapEditorPOC() {
   // en voegt hem toe aan de kamers.
   const finishDrawing = () => {
     if (drawPoints.length < 3) return;
-    const xs = drawPoints.Map((p) => p[0]);
-    const ys = drawPoints.Map((p) => p[1]);
+    const xs = drawPoints.map((p) => p[0]);
+    const ys = drawPoints.map((p) => p[1]);
     const originX = Math.min(...xs);
     const originY = Math.min(...ys);
-    const relativePoints = drawPoints.Map(([px, py]) => [px - originX, py - originY]);
+    const relativePoints = drawPoints.map(([px, py]) => [px - originX, py - originY]);
 
     const newRoom = {
       id: `loc_${Date.now()}`,
@@ -850,14 +850,14 @@ function MapEditorPOC() {
     setSelectedId(null);
   };
 
-  // Slaat de hele Map op als .json-bestand (download). De eigen items die
-  // op de Map gebruikt worden gaan mee, zodat de Map ook in een andere
+  // Slaat de hele map op als .json-bestand (download). De eigen items die
+  // op de map gebruikt worden gaan mee, zodat de map ook in een andere
   // browser (zonder die eigen items in localStorage) goed te openen is.
-  const saveMapToFile = () => {
-    const usedTypes = new Set(items.Map((it) => it.type));
+  const savemapToFile = () => {
+    const usedTypes = new Set(items.map((it) => it.type));
     const data = {
-      format: Map_FILE_FORMAT,
-      version: Map_FILE_VERSION,
+      format: map_FILE_FORMAT,
+      version: map_FILE_VERSION,
       locations,
       connections,
       items,
@@ -867,21 +867,21 @@ function MapEditorPOC() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "Map.json";
+    a.download = "map.json";
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    showHint("Map opgeslagen als Map.json");
+    showHint("map opgeslagen als map.json");
   };
 
-  // Leest een eerder opgeslagen .json-bestand in en vervangt de huidige Map.
-  const loadMapFromFile = async (file) => {
+  // Leest een eerder opgeslagen .json-bestand in en vervangt de huidige map.
+  const loadmapFromFile = async (file) => {
     if (!file) return;
-    if (locations.length > 0 && !window.confirm("De huidige Map wordt vervangen. Doorgaan?")) return;
+    if (locations.length > 0 && !window.confirm("De huidige map wordt vervangen. Doorgaan?")) return;
     let parsed;
     try {
-      parsed = parseMapFile(JSON.parse(await file.text()));
+      parsed = parsemapFile(JSON.parse(await file.text()));
     } catch (err) {
       showHint(`Kan ${file.name} niet openen: ${err.message}`);
       return;
@@ -890,7 +890,7 @@ function MapEditorPOC() {
     setConnections(parsed.connections);
     setItems(parsed.items);
     setCustomTypes((prev) => {
-      const known = new Set(prev.Map((t) => t.type));
+      const known = new Set(prev.map((t) => t.type));
       const next = [...prev, ...parsed.customTypes.filter((t) => !known.has(t.type))];
       saveCustomItemTypes(next);
       return next;
@@ -900,7 +900,7 @@ function MapEditorPOC() {
     setPendingEdge(null);
     setDrawMode(false);
     setDrawPoints([]);
-    showHint(`Map geladen uit ${file.name}`);
+    showHint(`map geladen uit ${file.name}`);
   };
 
   const deleteSelectedItem = () => {
@@ -921,13 +921,13 @@ function MapEditorPOC() {
   // Hernoemt de geselecteerde kamer. Tijdens het typen mag de naam even leeg
   // zijn; pas bij het verlaten van het veld (of als je een andere kamer
   // selecteert) vullen we lege namen aan, zodat er geen kamer zonder label op
-  // de Map blijft staan. Een naam met een scheldwoord wordt dan ook
+  // de map blijft staan. Een naam met een scheldwoord wordt dan ook
   // geblokkeerd: de kamer krijgt de naam van vóór het bewerken terug. Dit
   // gebeurt voor álle kamers, omdat het veld bij het wisselen van selectie
   // al bij de nieuwe kamer hoort.
   const renameSelectedRoom = (name) => {
     setLocations((prev) =>
-      prev.Map((loc) => (loc.id === selectedId ? { ...loc, name } : loc))
+      prev.map((loc) => (loc.id === selectedId ? { ...loc, name } : loc))
     );
   };
 
@@ -945,7 +945,7 @@ function MapEditorPOC() {
     }
     setLocations((prev) =>
       prev.some((loc) => fixedName(loc) !== loc.name)
-        ? prev.Map((loc) => ({ ...loc, name: fixedName(loc) }))
+        ? prev.map((loc) => ({ ...loc, name: fixedName(loc) }))
         : prev
     );
   };
@@ -956,12 +956,12 @@ function MapEditorPOC() {
 
   const moveSelectedRoom = (dx, dy) => {
     setLocations((prev) =>
-      prev.Map((loc) =>
+      prev.map((loc) =>
         loc.id === selectedId ? { ...loc, x: loc.x + dx * GRID, y: loc.y + dy * GRID } : loc
       )
     );
     setItems((prev) =>
-      prev.Map((it) =>
+      prev.map((it) =>
         it.roomId === selectedId ? { ...it, x: it.x + dx * GRID, y: it.y + dy * GRID } : it
       )
     );
@@ -1045,7 +1045,7 @@ function MapEditorPOC() {
     setConnections((prev) => prev.filter((conn) => conn.id !== connId));
   };
 
-  const connectionEls = connections.flatMap((conn) => {
+  const connectionEls = connections.flatmap((conn) => {
     const from = locations.find((l) => l.id === conn.from);
     const to = locations.find((l) => l.id === conn.to);
     if (!from || !to) return [];
@@ -1073,7 +1073,7 @@ function MapEditorPOC() {
   });
 
 
-  const roomEls = locations.Map((loc) => {
+  const roomEls = locations.map((loc) => {
     const isSelected = loc.id === selectedId;
     const shapeClassName = `room-shape${isSelected ? " is-selected" : ""}${loc.id === dropTargetId ? " is-drop-target" : ""}`;
     const { centerX, centerY } = boundsOf(loc);
@@ -1082,7 +1082,7 @@ function MapEditorPOC() {
     if (loc.shape === "polygon") {
       shapeEl = h("polygon", {
         className: shapeClassName,
-        points: loc.points.Map(([px, py]) => `${loc.x + px},${loc.y + py}`).join(" "),
+        points: loc.points.map(([px, py]) => `${loc.x + px},${loc.y + py}`).join(" "),
       });
     } else if (loc.shape === "circle") {
       const [rx, ry] = radiiOf(loc);
@@ -1098,7 +1098,7 @@ function MapEditorPOC() {
       className: "room-label",
       textAnchor: "middle",
       style: { fontSize: `${labelLayout.fontSize}px`, fontFamily: LABEL_FONT_FAMILY },
-    }, ...labelLayout.lines.Map((line, i) =>
+    }, ...labelLayout.lines.map((line, i) =>
       h("tspan", { key: i, x: centerX, y: line.y, dominantBaseline: "middle" }, line.text)
     ));
 
@@ -1112,23 +1112,23 @@ function MapEditorPOC() {
     }, h("title", null, loc.name), shapeEl, label);
   });
 
-  // Items op de Map: het placeholder-plaatje (een geneste <svg> zodat we
+  // Items op de map: het placeholder-plaatje (een geneste <svg> zodat we
   // dezelfde 24x24 glyph als in het paneel kunnen gebruiken) met de naam eronder.
-  const itemEls = items.Map((item) => {
+  const itemEls = items.map((item) => {
     const label = itemTypeOf(item.type, customTypes)?.label ?? item.type;
     const half = ITEM_SIZE / 2;
-    const classes = `Map-item${item.id === selectedItemId ? " is-selected" : ""}${draggingItem?.id === item.id ? " is-dragging" : ""}`;
+    const classes = `map-item${item.id === selectedItemId ? " is-selected" : ""}${draggingItem?.id === item.id ? " is-dragging" : ""}`;
     return h("g", {
       key: item.id,
       className: classes,
       onPointerDown: (e) => handleItemPointerDown(e, item),
     },
       h("title", null, label),
-      h("rect", { className: "Map-item-outline", x: item.x - half - 2, y: item.y - half - 2, width: ITEM_SIZE + 4, height: ITEM_SIZE + 4, rx: 3 }),
+      h("rect", { className: "map-item-outline", x: item.x - half - 2, y: item.y - half - 2, width: ITEM_SIZE + 4, height: ITEM_SIZE + 4, rx: 3 }),
       h("svg", { x: item.x - half, y: item.y - half, width: ITEM_SIZE, height: ITEM_SIZE, viewBox: "0 0 24 24" },
         placeholderGlyph(itemColorOf(item.type, customTypes))
       ),
-      h("text", { className: "Map-item-label", x: item.x, y: item.y + half + 5, textAnchor: "middle" }, label)
+      h("text", { className: "map-item-label", x: item.x, y: item.y + half + 5, textAnchor: "middle" }, label)
     );
   });
 
@@ -1191,19 +1191,19 @@ function MapEditorPOC() {
     ),
     customTypes.length > 0
       ? h("div", { className: "editor-palette-items" },
-          ...customTypes.Map((t) => paletteItemEl(t, () => deleteCustomType(t.type)))
+          ...customTypes.map((t) => paletteItemEl(t, () => deleteCustomType(t.type)))
         )
       : h("div", { className: "editor-palette-empty" }, "Nog geen eigen items. Ze worden in deze browser bewaard.")
   );
 
-  // Het paneel met items om de Map op te slepen, gegroepeerd per categorie.
+  // Het paneel met items om de map op te slepen, gegroepeerd per categorie.
   const paletteEl = h("div", { className: "editor-palette" },
     customGroupEl,
-    ...Object.entries(ITEM_CATEGORIES).Map(([category, { label }]) =>
+    ...Object.entries(ITEM_CATEGORIES).map(([category, { label }]) =>
       h("div", { key: category, className: "editor-palette-group" },
         h("div", { className: "editor-palette-heading" }, label),
         h("div", { className: "editor-palette-items" },
-          ...ITEM_TYPES.filter((t) => t.category === category).Map((t) => paletteItemEl(t))
+          ...ITEM_TYPES.filter((t) => t.category === category).map((t) => paletteItemEl(t))
         )
       )
     )
@@ -1240,7 +1240,7 @@ function MapEditorPOC() {
   // Resize-hendels, alleen voor de geselecteerde kamer en niet tijdens het
   // tekenen. Ze staan bovenop de rest, zodat je ze altijd kunt pakken.
   const resizeHandleEls = !drawMode && selected
-    ? resizeHandlesOf(selected).Map(({ id, pos: [hx, hy] }) =>
+    ? resizeHandlesOf(selected).map(({ id, pos: [hx, hy] }) =>
         h("rect", {
           key: `resize_${selected.id}_${id}`,
           className: `resize-handle resize-handle-${selected.shape === "polygon" ? "vertex" : id}`,
@@ -1307,17 +1307,17 @@ function MapEditorPOC() {
         : null,
       !drawMode
         ? h("button", {
-            onClick: saveMapToFile,
+            onClick: savemapToFile,
             className: "editor-btn",
-            title: "Download de Map als .json-bestand",
-          }, "Map opslaan")
+            title: "Download de map als .json-bestand",
+          }, "map opslaan")
         : null,
       !drawMode
         ? h("button", {
             onClick: () => fileInputRef.current?.click(),
             className: "editor-btn",
             title: "Open een eerder opgeslagen .json-bestand",
-          }, "Map openen")
+          }, "map openen")
         : null,
       h("input", {
         ref: fileInputRef,
@@ -1325,7 +1325,7 @@ function MapEditorPOC() {
         accept: ".json,application/json",
         style: { display: "none" },
         onChange: (e) => {
-          loadMapFromFile(e.target.files?.[0]);
+          loadmapFromFile(e.target.files?.[0]);
           e.target.value = ""; // zodat hetzelfde bestand nog eens gekozen kan worden
         },
       })
@@ -1379,5 +1379,5 @@ function MapEditorPOC() {
 
 const container = document.getElementById("root");
 if (container) {
-  createRoot(container).render(h(MapEditorPOC));
+  createRoot(container).render(h(mapEditorPOC));
 }
